@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# 环境变量
+.env
+
+# 数据库与存储
+storage/
+*.db
+*.sqlite3
+chroma_db/
+*.bak
+*.bak_*
+
+# 数据文件
+data/raw/*.xlsx
+data/raw/*.xls
+data/processed/*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
+
+# 前端依赖与构建产物
+frontend/node_modules/
+frontend/dist/
+
+# 本地模型（体积大，通过文档/脚本重新下载）
+models/
+
+# 生成报告
+reports/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 测试缓存
+.pytest_cache/
+.coverage
+htmlcov/

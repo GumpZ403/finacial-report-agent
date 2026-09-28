@@ -1,0 +1,121 @@
+/* ===== 主题变量（Claude.ai 风格：暖米白 + 中性深褐 + 橙色强调）===== */
+:root {
+  /* 基底 */
+  --bg: #faf9f5;            /* 主区暖米白 */
+  --bg-sidebar: #f0eee6;    /* 侧边栏略深 */
+  --bg-input: #ffffff;      /* 输入框卡片 */
+  --bg-user-msg: #e8e6de;   /* 用户消息气泡 */
+  --bg-hover: rgba(0, 0, 0, 0.045);
+  --bg-active: rgba(217, 119, 87, 0.1);
+
+  /* 文字 */
+  --text: #1f1e1b;          /* 主文字 */
+  --text-secondary: #6e6a5e;
+  --text-faint: #a8a497;
+
+  /* 强调（Claude 橙） */
+  --accent: #d97757;
+  --accent-hover: #c05f3e;
+  --accent-soft: rgba(217, 119, 87, 0.12);
+
+  /* 结构与边框 */
+  --border: #e3e0d8;
+  --border-strong: #d3cfc4;
+  --radius-lg: 24px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
+
+  --sans: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Consolas, 'Courier New', monospace;
+
+  font: 15px/1.6 var(--sans);
+  color: var(--text);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===== 通用按钮 ===== */
+button {
+  font: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+}
+button:disabled { cursor: not-allowed; opacity: 0.6; }
+
+/* ===== Markdown 渲染（AI 回复内）===== */
+.md-body { word-break: break-word; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+  margin: 0.9em 0 0.45em;
+  line-height: 1.35;
+  font-weight: 600;
+}
+.md-body h1 { font-size: 1.35em; }
+.md-body h2 { font-size: 1.2em; }
+.md-body h3 { font-size: 1.08em; }
+.md-body p { margin: 0.5em 0; }
+.md-body ul, .md-body ol { margin: 0.5em 0; padding-left: 1.5em; }
+.md-body li { margin: 0.2em 0; }
+.md-body code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: rgba(0, 0, 0, 0.055);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+.md-body pre {
+  background: #f5f4ef;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.md-body pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+.md-body table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.92em;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+.md-body th, .md-body td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.md-body th { background: #f5f4ef; font-weight: 600; }
+.md-body blockquote {
+  margin: 0.6em 0;
+  padding: 2px 14px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+.md-body a { color: var(--accent); text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
+
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #d6d2c6; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #c2bdb0; }
+::-webkit-scrollbar-track { background: transparent; }
