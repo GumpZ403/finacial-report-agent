@@ -17,17 +17,19 @@ const html = computed(() => {
 })
 
 // 流式阶段提示文字
+// 后端已按节点下发可读文案（如「调用工具取数…」），此处直接展示；
+// 保留旧映射仅为了兼容旧版服务端只发 task_type 的情况。
+const STAGE_TEXT = {
+  simple: '正在查询…',
+  react: '正在分析并调用工具…',
+  plan: '正在规划并生成报告…',
+  chat: '正在回复…',
+  processing: '正在处理…',
+}
 const stageText = computed(() => {
   const s = props.message.stage
   if (!s) return ''
-  const map = {
-    simple: '正在查询…',
-    react: '正在分析并调用工具…',
-    plan: '正在规划并生成报告…',
-    chat: '正在回复…',
-    processing: '正在处理…',
-  }
-  return map[s] || `正在处理（${s}）…`
+  return STAGE_TEXT[s] || s
 })
 </script>
 

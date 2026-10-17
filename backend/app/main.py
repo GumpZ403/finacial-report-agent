@@ -23,7 +23,10 @@ from app.platform.settings import get_settings
 from app.interfaces.http.routes.agent import router as agent_router
 # 组合根：显式 import 各领域的工具包以触发注册（否则 uvicorn 启动后 LLM 看不到任何工具）
 import app.domains.financial.tools  # noqa: F401  注册 query_company / query_financials / query_data_stats
-import app.domains.retrieval.tools  # noqa: F401  注册 rag_search
+# 注：app.domains.retrieval.tools（rag_search）**故意不注册**（2026-10 冻结）：
+#     当前语料是"结构化数值转成的文本"，检索回来仍是可精确查询的数字且精度更低，
+#     注册只会让模型多花一轮预算。等接入财报/公告原文语料后再打开这一行，
+#     并配合检索评测（recall@k / 引用正确率）一起上线。
 
 
 _NOT_BUILT = {

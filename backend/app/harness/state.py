@@ -1,6 +1,6 @@
-"""Agent 状态定义（LangGraph 共享黑板）
+"""Agent 状态定义（流程共享黑板）
 
-整张图的所有节点读写同一个 AgentState：
+一次运行里所有节点读写同一个 state dict（TypedDict 只做键提示，不做运行时校验）：
 - classify 节点写入 intent / task_type / entities
 - 执行节点写入 tool_results / messages
 - 生成节点写入 answer / meta
@@ -11,7 +11,7 @@ from typing import Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    """LangGraph 状态：所有节点共享的 dict（TypedDict 约束键）"""
+    """流程状态：所有节点共享的 dict（TypedDict 约束键）"""
 
     # ---- 输入 ----
     query: str                 # 用户问题原文

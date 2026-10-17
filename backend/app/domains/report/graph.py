@@ -12,17 +12,16 @@
 from __future__ import annotations
 
 from loguru import logger
-from langgraph.graph import StateGraph, END
 
-from app.harness.state import AgentState
+from app.harness.flow import Flow
 from app.harness.llm import get_llm
 
 # 财报报告的标准计划骨架（报告结构固定，模板化省一次 LLM 规划）
+# 注：rag_search 已于 2026-10 撤下（检索模块冻结，理由见 docs/ 与 main.py 组合根注释）
 DEFAULT_PLAN = [
     {"step": 1, "action": "query_company",  "desc": "公司基本信息（全称/行业/板块）"},
     {"step": 2, "action": "query_financials", "desc": "核心财务指标（营收/利润/毛利率/ROE）"},
     {"step": 3, "action": "query_financials", "desc": "近年趋势与同比变化"},
-    {"step": 4, "action": "rag_search",   "desc": "检索知识库补充行业/公司背景"},
 ]
 
 WRITE_SYSTEM_PROMPT = """你是财报解读报告撰写人。基于以下工具采集的数据，撰写一份结构完整的财报解读报告：
@@ -114,18 +113,17 @@ def _build_write_node():
     return write_node
 
 
-def build_plan_subgraph():
-    """构建并编译 Plan-Execute 子图"""
-    g = StateGraph(AgentState)
-    g.add_node("plan", _build_plan_node())
-    g.add_node("execute", _build_execute_node())
-    g.add_node("write", _build_write_node())
-    g.set_entry_point("plan")
+def build_plan_flow() -> Flow:
+    """构建 Plan-Execute 子流程"""
+    f = Flow("plan")
+    f.add_node("plan", _build_plan_node())
+    f.add_node("execute", _build_execute_node())
+    f.add_node("write", _build_write_node())
+    f.set_entry("plan")
 
     def _after_execute(state: dict) -> str:
         return "write" if (state.get("plan_index") or 0) >= len(state.get("plan") or []) else "execute"
 
-    g.add_edge("plan", "execute")
-    g.add_conditional_edges("execute", _after_execute, {"execute": "execute", "write": "write"})
-    g.add_edge("write", END)
-    return g.compile()
+    f.add_edge("plan", "execute")
+    f.add_router("execute", _after_execute, {"execute": "execute", "write": "write"})
+    return f

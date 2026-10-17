@@ -129,7 +129,8 @@ async function sendMessage(text) {
           continue
         }
         if (evt.type === 'stage') {
-          ai().stage = evt.stage || 'processing'
+          // 后端按节点下发可读文案（识别意图… / 调用工具取数…）；stage 只做标识
+          ai().stage = evt.message || evt.stage || 'processing'
         } else if (evt.type === 'result') {
           ai().content = evt.reply || ''
           ai().agent = evt.agent || ''

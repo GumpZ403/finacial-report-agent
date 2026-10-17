@@ -97,26 +97,42 @@ class TestToolRegistration:
 
     def test_tools_registered(self):
         import app.domains.financial.tools  # noqa: F401  触发注册
-        import app.domains.retrieval.tools  # noqa: F401
         from app.harness.registry import list_tool_names
 
         names = list_tool_names()
-        for expected in ("query_company", "query_financials", "query_data_stats", "rag_search"):
+        for expected in ("query_company", "query_financials", "query_data_stats"):
             assert expected in names, f"工具 {expected} 未注册，实际：{names}"
 
+    def test_rag_search_frozen(self):
+        """rag_search 故意不注册（检索模块冻结，见 main.py 组合根注释）。
 
-class TestConversationGraph:
-    """对话编排图可编译（不调用 LLM）"""
+        这条测试是决策锁：谁想重新打开 rag_search，必须先删掉/改写这条测试，
+        从而被迫读一遍冻结理由，而不是无声无息地把它加回来。
+        """
+        import app.domains.financial.tools  # noqa: F401
+        from app.harness.registry import list_tool_names
 
-    def test_graph_builds(self):
+        assert "rag_search" not in list_tool_names()
+
+
+class TestConversationFlow:
+    """对话编排流程可构建（不调用 LLM）"""
+
+    def test_flow_builds(self):
         from app.domains.conversation.graph import get_agent_graph
-        graph = get_agent_graph()
-        assert graph is not None
+        flow = get_agent_graph()
+        assert flow.node_names == ["classify", "chat", "tool", "answer", "react", "plan"]
+        assert flow.describe()["entry"] == "classify"
 
-    def test_react_subgraph_builds(self):
-        from app.domains.conversation.react import build_react_subgraph
-        assert build_react_subgraph() is not None
+    def test_react_flow_builds(self):
+        from app.domains.conversation.react import build_react_flow
+        f = build_react_flow()
+        assert set(f.node_names) == {"llm", "tool"}
 
-    def test_report_graph_builds(self):
-        from app.domains.report.graph import build_plan_subgraph
-        assert build_plan_subgraph() is not None
+    def test_report_flow_builds(self):
+        from app.domains.report.graph import DEFAULT_PLAN, build_plan_flow
+        f = build_plan_flow()
+        assert set(f.node_names) == {"plan", "execute", "write"}
+        # rag_search 撤下后计划只剩 3 步，且不再引用检索工具
+        assert len(DEFAULT_PLAN) == 3
+        assert all(step["action"] != "rag_search" for step in DEFAULT_PLAN)

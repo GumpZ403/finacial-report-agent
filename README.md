@@ -3,7 +3,7 @@
 面向 A 股上市公司财报的解读与研究辅助 Agent：指标查询与跨公司对比、数据概览、
 公司档案、RAG 语义检索与财报解读报告生成。
 
-**架构**：LangGraph（单 LLM + 标准 function calling）+ SQLite + ChromaDB + akshare（东财三表）
+**架构**：自研轻量流程执行器（`backend/app/harness/flow.py`；单 LLM + 标准 function calling）+ SQLite + ChromaDB + akshare（东财三表）
 + FastAPI 后端 + Vue3 前端。
 
 **合规红线**：不做预测、不给投资建议、不评级、不给目标价；所有指标计算在 SQL/pandas 完成，
@@ -14,7 +14,7 @@ LLM 只负责自然语言理解与表达。
 ```
 financial-report-agent/
 ├── backend/                 Python 后端（唯一后端）
-│   ├── app/                 FastAPI + LangGraph 应用
+│   ├── app/                 FastAPI + 自研 Flow 应用
 │   ├── scripts/             数据采集 / 巡检 / 评测脚本
 │   ├── tests/               pytest 基线测试
 │   ├── requirements.txt     依赖清单（唯一来源）
@@ -89,7 +89,7 @@ cd backend
 
 进度以 [agent.md](agent.md) 的里程碑表为准。当前已实现：
 - 数据层：东财三表采集 → 归一化 → SQLite（9 张业务表）→ 文本化 → 向量化
-- 编排层：LangGraph（classify 路由 + simple/react/plan 三条执行路径 + 标准 function calling 协议）
+- 编排层：自研 Flow（`backend/app/harness/flow.py`；classify 路由 + simple/react/plan 三条执行路径 + 标准 function calling 协议）
 - 工具层：query_company / query_financials（single/trend/yoy）/ query_data_stats / rag_search
 - 执行层：`harness/invoke.py` 统一做参数校验 + 结构化错误 + 有界重试 + 熔断（NO_DATA ≠ 故障）
 - 会话层：按 session_id 隔离的记忆（进程内），流式与非流式入口都会写

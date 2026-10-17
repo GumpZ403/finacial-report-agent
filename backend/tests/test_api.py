@@ -1,27 +1,30 @@
 """HTTP 接口测试：健康检查、SSE 流式写记忆、会话隔离、CORS
 
-用 FakeGraph 替换真实 LangGraph（不花 LLM token），只验证接口层契约。
+用 FakeFlow 替换真实编排流程（不花 LLM token），只验证接口层契约。
 """
 import pytest
 from fastapi.testclient import TestClient
 
+from app.harness.flow import FlowEvent
 from app.harness.memory import get_session_store
 from app.interfaces.http.routes import agent as routes_agent
 from app.main import app
 
 
-class FakeGraph:
-    """记录入参、返回固定答案的假图"""
+class FakeFlow:
+    """记录入参、可按需发事件、返回固定答案的假流程"""
 
     def __init__(self):
         self.calls: list[dict] = []
 
-    def stream(self, payload, stream_mode=None):
+    def run(self, payload, on_event=None, checkpoint=None):
         self.calls.append(payload)
-        yield {"task_type": "chat", "intent": "chat", "answer": "假答案", "meta": {}}
-
-    def invoke(self, payload):
-        self.calls.append(payload)
+        if on_event is not None:
+            # 模拟主流程：先 classify 再 answer
+            on_event(FlowEvent(kind="node_start", flow="conversation", node="classify"))
+            on_event(FlowEvent(kind="node_end", flow="conversation",
+                               node="classify", next="tool"))
+            on_event(FlowEvent(kind="node_start", flow="conversation", node="answer"))
         return {"intent": "chat", "answer": "假答案", "meta": {}}
 
 
@@ -32,7 +35,7 @@ def client():
 
 @pytest.fixture
 def fake_graph(monkeypatch):
-    g = FakeGraph()
+    g = FakeFlow()
     monkeypatch.setattr(routes_agent, "_graph", g)
     return g
 
@@ -107,6 +110,24 @@ class TestSessionMemory:
         d = client.get("/api/agent/memory?session_id=t-a").json()
         assert d["session_id"] == "t-a"
         assert d["short_term_len"] == 2
+
+
+class TestStreaming:
+    """SSE 逐节点阶段事件（此前每步重复同一个 task_type，等于没有信息量）"""
+
+    def test_stage_events_are_per_node(self, client, fake_graph):
+        r = client.post("/api/agent/chat/stream", json={"query": "你好", "session_id": "t-stream"})
+        assert r.status_code == 200
+        assert '"type": "stage"' in r.text
+        assert "识别意图" in r.text
+        assert "整理回答" in r.text
+        # 阶段事件必须按执行顺序推送（否则前端进度条会跳回）
+        assert r.text.index("识别意图") < r.text.index("整理回答")
+
+    def test_flow_structure_endpoint(self, client):
+        d = client.get("/api/agent/flow").json()
+        assert d["entry"] == "classify"
+        assert set(d["nodes"]) == {"classify", "chat", "tool", "answer", "react", "plan"}
 
 
 class TestCORS:

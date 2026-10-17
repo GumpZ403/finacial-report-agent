@@ -17,8 +17,8 @@ chromadb>=1.5.9,<2.0
 akshare>=1.14.0,<2.0
 
 # ===== LLM / 编排 =====
+# 编排层为自研 Flow（app/harness/flow.py），不再依赖 langgraph / langchain-core（2026-10 移除）
 openai>=3.19.2,<4.0
-langgraph>=1.2.12,<2.0
 sentence-transformers>=6.1.0,<7.0
 
 # ===== 通用工具 =====
@@ -37,5 +37,5 @@ httpx>=0.28.0                 # fastapi TestClient 依赖
 # - 版本上限按 2026-10 本地 .venv 实测版本给出，避免主版本升级被动破坏。
 # - 已移除未使用依赖：redis（无落地代码）、tiktoken（无 import）、streamlit（旧原型）、
 #   python-multipart（无文件上传接口）。
-# - langchain-core 由 langgraph 传递依赖，代码无直接 import，故不单列。
+# - langchain-core 随 langgraph 一并移除（代码无直接 import）。
 # - torch 由 sentence-transformers 传递安装，不单列。

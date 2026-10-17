@@ -15,9 +15,8 @@ from __future__ import annotations
 import json
 
 from loguru import logger
-from langgraph.graph import StateGraph, END
 
-from app.harness.state import AgentState
+from app.harness.flow import END, Flow
 from app.harness import registry as tools_registry
 from app.harness.invoke import run_tool
 from app.harness.llm import get_llm
@@ -152,13 +151,12 @@ def _build_should_continue():
     return should_continue
 
 
-def build_react_subgraph():
-    """构建并编译 ReAct 子图（作为主图的一个节点挂载）"""
-    g = StateGraph(AgentState)
-    g.add_node("llm", _build_llm_node())
-    g.add_node("tool", _build_tool_node())
-    g.set_entry_point("llm")
-    g.add_conditional_edges("llm", _build_should_continue(),
-                            {"tool": "tool", "end": END})
-    g.add_edge("tool", "llm")          # 工具结果回 LLM 继续推理
-    return g.compile()
+def build_react_flow() -> Flow:
+    """构建 ReAct 子流程（作为主流程的一个节点挂载）"""
+    f = Flow("react")
+    f.add_node("llm", _build_llm_node())
+    f.add_node("tool", _build_tool_node())
+    f.set_entry("llm")
+    f.add_router("llm", _build_should_continue(), {"tool": "tool", "end": END})
+    f.add_edge("tool", "llm")          # 工具结果回 LLM 继续推理
+    return f

@@ -1,23 +1,24 @@
-"""财报解读 Agent 主图：组装 + 编译
+"""财报解读 Agent 主流程：组装（自研 Flow，见 harness/flow.py）
 
 ```
 用户提问 → classify（一次 LLM：intent + task_type + entities）
-              │ 条件边（route 读 task_type）
+              │ 路由器 route 读 task_type
               ├─ simple → tool（执行预选工具）→ answer（LLM 总结）→ END
-              ├─ react  → ReAct 子图（多步推理循环）
-              ├─ plan   → Plan-Execute 子图（长任务报告）
-              └─ chat   → chat_node（LLM 直接回答）→ END
+              ├─ react  → ReAct 子流程（多步推理循环）
+              ├─ plan   → Plan-Execute 子流程（长任务报告）
+              └─ chat   → chat 节点（LLM 直接回答）→ END
 ```
+
+子流程就是普通节点：`add_node("react", build_react_flow())`。
 """
 from __future__ import annotations
 
 from loguru import logger
-from langgraph.graph import StateGraph, END
 
-from app.harness.state import AgentState
+from app.domains.conversation.react import build_react_flow
 from app.domains.conversation.routing import classify_node, route
-from app.domains.conversation.react import build_react_subgraph
-from app.domains.report.graph import build_plan_subgraph
+from app.domains.report.graph import build_plan_flow
+from app.harness.flow import Flow
 from app.harness.llm import get_llm
 
 CHAT_SYSTEM_PROMPT = """你是「财报解读 Agent」。
@@ -28,7 +29,7 @@ CHAT_SYSTEM_PROMPT = """你是「财报解读 Agent」。
 4. 数据概览：如「数据库里有哪些公司、多少期数据」
 
 当用户问「你是谁 / 你能干什么」时，简洁介绍以上能力并各给一个示例问法；
-其他时候正常自然聊天。自称「财报解读助手」，不要说「路由器」「图」「节点」等内部术语。"""
+其他时候正常自然聊天。自称「财报解读助手」，不要说「路由器」「流程」「节点」等内部术语。"""
 
 
 def _build_chat_node():
@@ -95,40 +96,38 @@ def _build_answer_node():
     return answer_node
 
 
-def build_graph():
-    """构建并编译主图（进程内单例由调用方持有）"""
-    g = StateGraph(AgentState)
+def build_graph() -> Flow:
+    """构建主流程（进程内单例由 get_agent_graph 持有）"""
+    f = Flow("conversation")
 
-    g.add_node("classify", classify_node)
-    g.add_node("chat", _build_chat_node())
-    g.add_node("tool", _build_tool_node())
-    g.add_node("answer", _build_answer_node())
-    # 子图作为节点挂载
-    g.add_node("react", build_react_subgraph())
-    g.add_node("plan", build_plan_subgraph())
+    f.add_node("classify", classify_node)
+    f.add_node("chat", _build_chat_node())
+    f.add_node("tool", _build_tool_node())
+    f.add_node("answer", _build_answer_node())
+    # 子流程作为节点挂载
+    f.add_node("react", build_react_flow())
+    f.add_node("plan", build_plan_flow())
 
-    g.set_entry_point("classify")
-    g.add_conditional_edges("classify", route, {
+    f.set_entry("classify")
+    f.add_router("classify", route, {
         "simple": "tool",
         "react": "react",
         "plan": "plan",
         "chat": "chat",
     })
-    g.add_edge("tool", "answer")
-    g.add_edge("answer", END)
-    g.add_edge("chat", END)
-
-    return g.compile()
+    f.add_edge("tool", "answer")
+    # answer / chat / react / plan 均无出边 → 流程结束
+    return f
 
 
-# 模块级编译入口（供 api/ 层引用）
-_compiled = None
+# 模块级单例（供 interfaces 层引用）
+_compiled: Flow | None = None
 
 
-def get_agent_graph():
-    """获取主图编译实例（懒加载单例）"""
+def get_agent_graph() -> Flow:
+    """获取主流程实例（懒加载单例）"""
     global _compiled
     if _compiled is None:
         _compiled = build_graph()
-        logger.info("[AgentGraph] 主图编译完成")
+        logger.info(f"[AgentFlow] 主流程构建完成：{_compiled.node_names}")
     return _compiled

@@ -32,7 +32,7 @@
 **合规红线（硬约束）**：不做预测、不给投资建议、不评级、不给目标价；
 所有指标计算在 SQL/pandas 完成，LLM 只负责自然语言理解与表达。
 
-## 3. 整体架构（当前生效，2026-09-26 LangGraph 版）
+## 3. 整体架构（当前生效，2026-10 自研 Flow 版）
 
 ```
 D:\A_projects\finacial-report-agent\
@@ -138,8 +138,8 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 | M1 | 数据层：akshare 采集 + 入库 + L0 | ✅ 完成 |
 | M1.5 | 数据层收尾：schema/repository 拆分、textify、vector_db 财报版 | ✅ 完成 |
 | M3 | 数据源映射：**东财三表替代新浪双源**（映射表 + 归一化 + 重拉 20 家） | ✅ 完成 |
-| M4 | 工具层：query_company / query_financials（single/trend/yoy）/ query_data_stats / rag_search | ✅ 完成 |
-| 架构 | 编排层 LangGraph（classify 路由 + 三执行路径 + 标准 FC 协议） | ✅ 完成（2026-09-26） |
+| M4 | 工具层：query_company / query_financials（single/trend/yoy）/ query_data_stats（rag_search 已冻结，不注册） | ✅ 完成 |
+| 架构 | 编排层自研 Flow（classify 路由 + 三执行路径 + 标准 FC 协议） | ✅ 完成（2026-10 由 LangGraph 迁移） |
 | M5 | 报告 DAG：plan 子图 + 写作 + docx 输出 | 🔄 部分（plan 子图已有，docx 落盘未接） |
 | M6 | 前端财报化 | 🔄 部分（对话入口可用，可视化未做） |
 | M2 | 放量全市场（**后置**：先验收全链路，再谈放量） | ⏸ 后置 |
@@ -149,7 +149,7 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 
 ## 6. 技术栈（当前生效）
 
-- **编排层**：LangGraph 1.2.x（图状态机 + 条件边 + 子图），单 LLM + 标准 function calling
+- **编排层**：自研 Flow（`backend/app/harness/flow.py`；节点 + 边 + 路由器 + 子流程 + 扇出，逐节点事件与 checkpoint 钩子），单 LLM + 标准 function calling
 - **存储层**：SQLite（权威数据，SQLAlchemy 2.0）+ ChromaDB（语义检索）
 - **数据源**：akshare 1.18.x（东财三表 + 行业接口）
 - **模型**：DeepSeek（LLM，OpenAI 兼容协议）/ bge-base-zh-v1.5（embedding）/ bge-reranker-v2-m3（重排）
