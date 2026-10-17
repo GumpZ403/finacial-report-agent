@@ -30,8 +30,9 @@ from datetime import datetime
 
 from loguru import logger
 
-from app.domains.financial.scope import is_applicable, normalize_template
-from app.domains.financial.repository import get_db, normalize_code, UNIT_BY_TYPE, UNIT_UNKNOWN
+from app.domains.financial.industry_scope import is_applicable, normalize_template
+from app.domains.financial.display import UNIT_BY_TYPE, UNIT_UNKNOWN
+from app.domains.financial.repository import get_db, normalize_code
 from app.domains.financial.models import FinancialCore
 
 # 同比复现容差

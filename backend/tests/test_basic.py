@@ -65,12 +65,12 @@ class TestDataLayer:
         assert get_adapter is not None
 
     def test_scope_import(self):
-        from app.domains.financial.scope import is_applicable, normalize_template
+        from app.domains.financial.industry_scope import is_applicable, normalize_template
         assert normalize_template("financial") == "financial"
         assert is_applicable is not None
 
     def test_formatting(self):
-        from app.domains.financial.formatting import fmt_value
+        from app.domains.financial.display import fmt_value
         assert fmt_value(1.234e9, "amount") == "12.34 亿元"
         assert fmt_value(0.1234, "ratio") == "12.34%"
         assert fmt_value(None, "ratio") == "N/A"

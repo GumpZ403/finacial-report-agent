@@ -20,7 +20,8 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from app.platform.settings import get_settings
 from app.domains.financial.dates import years_ago
-from app.domains.financial.scope import normalize_template
+from app.domains.financial.industry_scope import normalize_template
+from app.domains.financial.display import UNIT_BY_TYPE, UNIT_UNKNOWN
 from app.domains.financial.models import (
     Base,
     CompanyMaster, FinancialPeriod, FinancialMetric, FinancialCore,
@@ -29,16 +30,7 @@ from app.domains.financial.models import (
 
 # ---------- 口径常量（方案 §4.2 / §4.3）----------
 
-# 单位由 metric_dict.unit_type 推导：金额归一为元，比率存小数故标 ratio 而非 %
-UNIT_BY_TYPE: dict[str, str] = {
-    "amount": "CNY",
-    "ratio": "ratio",
-    "times": "times",
-    "days": "days",
-    "per_share": "per_share",
-    "count": "count",
-}
-UNIT_UNKNOWN = "unknown"
+# 单位语义（UNIT_BY_TYPE / UNIT_UNKNOWN / 展示格式化）统一在 display.py
 
 # 取值来源
 SOURCE_EM = "eastmoney"                 # 东方财富三表（资产负债表/利润表/现金流量表）

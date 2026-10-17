@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from loguru import logger
 
-from app.domains.financial.scope import is_applicable, normalize_template
+from app.domains.financial.industry_scope import is_applicable, normalize_template
+from app.domains.financial.display import fmt_change, fmt_value
 from app.domains.financial.repository import get_db, normalize_code
 
 # ---------- 指标中文名 ----------
@@ -133,37 +134,40 @@ _MISSING = "数据缺失"
 
 # ---------- 格式化工具 ----------
 
-def _fmt_value(code: str, v: float | None) -> str | None:
-    """按指标类型格式化数值（单位由指标决定，不按数值大小推断）
+def _unit_type_of(code: str) -> str:
+    """指标 code → 展示单位类型（格式化实现统一在 display.py）
 
-    修正点：原先"绝对值 ≥1e8 才用亿元"会让小额科目（如个别公司早期营收）在同一指标内
-    忽而"元"忽而"亿元"，此处金额一律用亿元。
+    TODO: 这里的分类仍是手写集合，权威来源应该是 metric_dict.unit_type；
+    等 corpus 生成器改成"从 metric_dict 读单位"后删掉这些集合。
     """
+    if code in _AMOUNT_CODES:
+        return "amount"
+    if code in _RATIO_CODES:
+        return "ratio"
+    if code in _TIMES_CODES:
+        return "times"
+    if code in _MULTIPLE_CODES:
+        return "multiple"
+    if code in _DAYS_CODES:
+        return "days"
+    if code in _PER_SHARE_CODES:
+        return "per_share"
+    if code in _COUNT_CODES:
+        return "count"
+    logger.debug(f"指标 {code} 未声明展示类型，按裸数值输出（请补 CORE_LABELS/类型集合）")
+    return ""
+
+
+def _fmt_value(code: str, v: float | None) -> str | None:
+    """按指标类型格式化数值（单位由指标决定，不按数值大小推断）"""
     if v is None:
         return None
-    if code in _AMOUNT_CODES:
-        return f"{v / 1e8:,.2f} 亿元" if abs(v) < 1e8 else f"{v / 1e8:,.1f} 亿元"
-    if code in _RATIO_CODES:
-        return f"{v * 100:.2f}%"
-    if code in _TIMES_CODES:
-        return f"{v:.2f} 次"
-    if code in _DAYS_CODES:
-        return f"{v:.1f} 天"
-    if code in _MULTIPLE_CODES:
-        return f"{v:.2f} 倍"
-    if code in _PER_SHARE_CODES:
-        return f"{v:,.2f} 元/股"
-    if code in _COUNT_CODES:
-        return f"{v:,.0f} 人"
-    logger.debug(f"指标 {code} 未声明展示类型，按裸数值输出（请补 CORE_LABELS/类型集合）")
-    return f"{v:,.2f}"
+    return fmt_value(v, _unit_type_of(code))
 
 
 def _fmt_change(code: str, change: float) -> str:
     """变化幅度：比率类用百分点，其余用百分比"""
-    if code in _RATIO_CODES:
-        return f"{change * 100:+.2f} 个百分点"
-    return f"{change * 100:+.1f}%"
+    return fmt_change(change, "ratio" if code in _RATIO_CODES else "")
 
 
 def _suffix_from_code(code: str) -> str:

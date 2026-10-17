@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from app.domains.financial.formatting import fmt_value
+from app.domains.financial.display import fmt_value
 from app.domains.financial.repository import get_db
 from app.harness import registry as tools_registry
 from app.harness.invoke import no_data

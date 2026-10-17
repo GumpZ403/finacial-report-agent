@@ -15,7 +15,7 @@
 """
 from app.domains.financial.models import Base
 from app.domains.financial.repository import Database, get_db, normalize_code
-from app.domains.financial.scope import is_applicable, normalize_template
+from app.domains.financial.industry_scope import is_applicable, normalize_template
 
 __all__ = [
     "Base", "Database", "get_db", "normalize_code",
