@@ -12,6 +12,7 @@ from loguru import logger
 from app.domains.retrieval.hybrid import get_retriever
 from app.domains.retrieval.reranker import RerankerTool
 from app.harness import registry as tools_registry
+from app.harness.invoke import no_data
 from app.platform.settings import get_settings
 
 
@@ -48,10 +49,14 @@ class RagSearchTool:
         } for d in reranked]
 
         # 4. 文本版（ReAct 消息回填用）
+        if not chunks:
+            # 检索不到 ≠ 系统故障：显式声明 no_data，避免上层把它当异常重试
+            return no_data("（未检索到相关片段）", chunks=[], retrieved_count=len(docs), used_count=0)
+
         lines = []
         for i, c in enumerate(chunks, 1):
             lines.append(f"[来源{i}] {c['company']} | {c['period']} | {c['group']} (score={c['score']})\n{c['text']}")
-        reply = "\n\n".join(lines) or "（未检索到相关片段）"
+        reply = "\n\n".join(lines)
         return {
             "reply": reply,
             "meta": {"chunks": chunks, "retrieved_count": len(docs), "used_count": len(chunks)},

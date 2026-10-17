@@ -2,15 +2,14 @@
 记忆模块（harness 层，与业务无关）
 
 - 短期记忆：当前对话上下文（滑动窗口 + 摘要压缩）
-- 会话隔离：**尚未实现**——当前是进程内单例，所有请求共享同一份记忆。
-  下一步引入 session store 时，Memory 实例将按 session_id 创建（见 docs 架构诊断 §1.5）。
-
-历史说明：长期记忆（add_long_term / recall）已删除——全仓库零调用，
-且其向量检索用 embedding 服务，会在 import 期把 sentence-transformers 拉进来。
+- 会话隔离：SessionStore 按 session_id 管理 Memory 实例（进程内 LRU）
+  **注意**：仍是进程内存储，服务重启即丢；落库（SQLite conversations 表）列入下一步。
+- 长期记忆（add_long_term / recall）已删除——全仓库零调用，且其向量检索用
+  embedding 服务，会在 import 期把 sentence-transformers 拉进来。
 """
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime
 
 from loguru import logger
@@ -75,3 +74,61 @@ class Memory:
 
     def get_summary(self) -> str:
         return self._summary
+
+
+DEFAULT_SESSION_ID = "default"
+
+
+class SessionStore:
+    """按 session_id 管理 Memory 实例（进程内 LRU）
+
+    为什么要它：此前 api 层持有**模块级单个 Memory**，`session_id` 字段形同虚设，
+    所有浏览器/所有会话共用一份短期记忆——多开标签页会互相污染上下文。
+
+    容量用满后淘汰最久未使用的会话（其上下文即丢失，不做持久化）。
+    """
+
+    def __init__(self, max_sessions: int = 50, max_short_term: int = 20):
+        self.max_sessions = max_sessions
+        self.max_short_term = max_short_term
+        self._sessions: OrderedDict[str, Memory] = OrderedDict()
+
+    @staticmethod
+    def normalize(session_id: str | None) -> str:
+        sid = (session_id or "").strip()
+        return sid or DEFAULT_SESSION_ID
+
+    def get(self, session_id: str | None) -> Memory:
+        """取（或创建）某会话的记忆实例；访问即刷新 LRU 顺序"""
+        sid = self.normalize(session_id)
+        mem = self._sessions.get(sid)
+        if mem is not None:
+            self._sessions.move_to_end(sid)
+            return mem
+        if len(self._sessions) >= self.max_sessions:
+            evicted, _ = self._sessions.popitem(last=False)
+            logger.info(f"[SessionStore] 会话数达上限，淘汰最久未用会话: {evicted}")
+        mem = Memory(max_short_term=self.max_short_term)
+        self._sessions[sid] = mem
+        return mem
+
+    def drop(self, session_id: str | None) -> None:
+        """丢弃一个会话的记忆（/clear 用）"""
+        sid = self.normalize(session_id)
+        if self._sessions.pop(sid, None) is not None:
+            logger.info(f"[SessionStore] 会话已清理: {sid}")
+
+    def active_sessions(self) -> list[str]:
+        return list(self._sessions.keys())
+
+
+_store: SessionStore | None = None
+
+
+def get_session_store() -> SessionStore:
+    """获取全局 SessionStore 单例"""
+    global _store
+    if _store is None:
+        _store = SessionStore()
+    return _store
+

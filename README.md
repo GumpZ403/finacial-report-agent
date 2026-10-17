@@ -82,14 +82,24 @@ cd backend
 - **数据源**：东财三表（资产负债表/利润表/现金流量表，均累计口径）+ 映射表归一化；
   新浪双源已退役。
 - **单位**由 `metric_dict.unit_type` 推导（amount→CNY 元，ratio→小数，times/days/per_share/count）。
-- **向量库**：1589 个财报片段（bge-base-zh-v1.5，768 维），元数据 company/period/group。
+- **向量库**：Chroma 集合 `financial_chunks`（bge-base-zh-v1.5，768 维），元数据 company/period/group；
+  当前为空（见下方已知问题）。
 
 ## 当前进度与已知问题
 
 进度以 [agent.md](agent.md) 的里程碑表为准。当前已实现：
-- 数据层：东财三表采集 → 归一化 → SQLite 12 表（20 家 / 833 期 / 45,964 指标）→ 文本化 → 向量化
-- 编排层：LangGraph（classify 路由 + simple/react/plan 三执行路径 + 标准 function calling 协议）
+- 数据层：东财三表采集 → 归一化 → SQLite（9 张业务表）→ 文本化 → 向量化
+- 编排层：LangGraph（classify 路由 + simple/react/plan 三条执行路径 + 标准 function calling 协议）
 - 工具层：query_company / query_financials（single/trend/yoy）/ query_data_stats / rag_search
-- 服务层：FastAPI（SSE 流式对话）+ Vue3 前端
+- 执行层：`harness/invoke.py` 统一做参数校验 + 结构化错误 + 有界重试 + 熔断（NO_DATA ≠ 故障）
+- 会话层：按 session_id 隔离的记忆（进程内），流式与非流式入口都会写
+- 服务层：FastAPI（SSE 流式对话）+ Vue3 前端（唯一前端，dist 由后端托管）
 
-**未完成**：报告 docx 落盘接入（M5）、前端图表可视化（M6）、放量全市场（M2）。
+**已知问题 / 待办**：
+- **本地库当前是空库**：`storage/financial.db` 只有表结构（公司 0 家、指标 0 条），
+  `storage/chroma_db` 无向量；需先 `pip install akshare` 再执行 `scripts/fetch_slice.py` 拉数。
+- 会话记忆仅在进程内，重启即丢（落 SQLite 待做）。
+- 报告阶段仍是“模板 DAG + 一次长文生成”，八章结构 / 数字白名单溯源 / 投研合规校验（方案 §6）未落地；
+  写作子代理（多 agent 协作）只有接口约定（`domains/report/agents/`）。
+- 评测体系（方案 §8 L0~L4）尚未落地，`scripts/eval/` 未建。
+- 前端无图表（方案 §7 的 `/api/financial/series` + ECharts 未接入）。

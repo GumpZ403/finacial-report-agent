@@ -52,13 +52,19 @@ def _build_chat_node():
 def _build_tool_node():
     def tool_node(state: dict) -> dict:
         """simple 路径：执行 classify 预选的工具"""
-        from app.harness import registry as tools_registry
+        from app.harness.invoke import run_tool
+
         name = state.get("tool_name") or ""
         # 工具参数：classify 抽取的实体（公司/指标/时间）直接作为入参
         args = state.get("entities") or {}
         logger.info(f"[simple] 执行工具: {name} args={args}")
-        result = tools_registry.execute_tool(name, args)
-        return {"tool_results": [{"tool": name, "args": args, "reply": result.get("reply", "")}]}
+        result = run_tool(name, args)
+        return {"tool_results": [{
+            "tool": name,
+            "args": args,
+            "reply": result.reply,
+            "tool_status": result.status.value,
+        }]}
 
     return tool_node
 

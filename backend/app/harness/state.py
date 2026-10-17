@@ -28,9 +28,14 @@ class AgentState(TypedDict, total=False):
     # ---- 执行过程 ----
     tool_rounds: int           # 已执行工具轮数（ReAct 限深用）
     max_rounds: int            # 工具调用上限（防死循环）
-    tool_results: list[dict]   # 工具执行结果列表（[{tool, args, reply}]）
+    tool_results: list[dict]   # 工具执行结果列表（[{tool, args, reply, tool_status}]）
     tool_calls: list[dict]     # 本轮待执行工具队列（标准 FC：[{id, function:{name, arguments}}]）
     messages: list[dict]       # agent 内部消息（完整轨迹：assistant(tool_calls) + tool 回填）
+
+    # ---- Plan & Solve（报告子图专有：此前用了却未声明，TypedDict 校验不到）----
+    plan: list[dict]           # 计划步骤（[{step, action, desc, args?}]）
+    plan_index: int            # 已执行到第几步
+    collected: list[dict]      # 计划执行收集到的数据（[{step, result, status}]）
 
     # ---- 输出 ----
     answer: str                # 最终回答文本

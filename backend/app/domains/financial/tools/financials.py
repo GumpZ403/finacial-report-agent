@@ -12,6 +12,7 @@ from __future__ import annotations
 from app.domains.financial.formatting import fmt_value
 from app.domains.financial.repository import get_db
 from app.harness import registry as tools_registry
+from app.harness.invoke import no_data
 
 
 class FinancialQueryTool:
@@ -75,13 +76,13 @@ class FinancialQueryTool:
         # 1. 定位公司
         comp = self._resolve_company(self.db, company)
         if not comp:
-            return {"reply": f"未找到公司：{company or '（未指定）'}", "meta": {}}
+            return no_data(f"未找到公司：{company or '（未指定）'}")
         code = comp["code"]
 
         # 2. 定位指标
         metric_code = self._resolve_metric(metric)
         if not metric_code:
-            return {"reply": f"未找到指标：{metric or '（未指定）'}", "meta": {}}
+            return no_data(f"未找到指标：{metric or '（未指定）'}")
         meta = self.db.list_metric_dict().get(metric_code, {})
         metric_cn = meta.get("name_cn", metric_code)
         unit_type = meta.get("unit_type", "")
@@ -89,14 +90,14 @@ class FinancialQueryTool:
         # 3. 取该公司全部报告期宽表行
         rows = self.db.list_core_rows(code)
         if not rows:
-            return {"reply": f"{comp['name']} 暂无财报数据", "meta": {}}
+            return no_data(f"{comp['name']} 暂无财报数据")
         rows_sorted = sorted(rows, key=lambda r: self._period_key(r.get("period", "")), reverse=True)
 
         # 4. 按模式查询
         if mode == "trend":
             selected = rows_sorted[:top_n]
             if not selected:
-                return {"reply": f"{comp['name']} 无趋势数据", "meta": {}}
+                return no_data(f"{comp['name']} 无趋势数据")
             seq = []
             for r in reversed(selected):
                 val = r.get(metric_code)
@@ -112,7 +113,7 @@ class FinancialQueryTool:
                 period = rows_sorted[0].get("period", "")
             target = next((r for r in rows_sorted if r.get("period") == period), None)
             if not target:
-                return {"reply": f"{comp['name']} 无报告期 {period}", "meta": {}}
+                return no_data(f"{comp['name']} 无报告期 {period}")
             # 同口径上一报告期：同 period_type 的前一年（2025Q1 → 2024Q1）
             year = int(period[:4]) if period[:4].isdigit() else 0
             suffix = period[4:] if len(period) > 4 else ""
@@ -120,7 +121,7 @@ class FinancialQueryTool:
             prev = next((r for r in rows_sorted if r.get("period") == prev_period), None)
             cur_v, prev_v = target.get(metric_code), (prev.get(metric_code) if prev else None)
             if cur_v is None:
-                return {"reply": f"{comp['name']} {period} 无 {metric_cn} 数据", "meta": {}}
+                return no_data(f"{comp['name']} {period} 无 {metric_cn} 数据")
             if prev_v in (None, 0):
                 return {
                     "reply": f"{comp['name']} {metric_cn}（{period}）：{fmt_value(cur_v, unit_type)}"
@@ -139,7 +140,7 @@ class FinancialQueryTool:
         if period:
             target = next((r for r in rows_sorted if r.get("period") == period), None)
             if not target:
-                return {"reply": f"{comp['name']} 无报告期 {period}", "meta": {}}
+                return no_data(f"{comp['name']} 无报告期 {period}")
         else:
             target = rows_sorted[0]
         val = target.get(metric_code)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from app.domains.financial.repository import get_db
 from app.harness import registry as tools_registry
+from app.harness.invoke import no_data
 
 
 class CompanyTool:
@@ -27,7 +28,8 @@ class CompanyTool:
             }
         info = self.db.get_company(name=company) or self.db.get_company(code=company)
         if not info:
-            return {"reply": f"未找到公司：{company}", "meta": {}}
+            # 显式声明“没查到”而不是当故障：调用方（LLM）据此换参数或如实告知用户
+            return no_data(f"未找到公司：{company}")
         lines = [
             f"- 公司全称：{info.get('name', '')}",
             f"- 代码：{info.get('code', '')}",

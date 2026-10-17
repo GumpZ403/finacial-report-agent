@@ -4,10 +4,10 @@
 
 当前为骨架版本：
 - plan 节点：模板化计划（财报报告结构固定，不需要每次让 LLM 从头规划）
-- execute 节点：按计划执行工具（从 tools_registry 取）
+- execute 节点：按计划执行工具（统一走 harness/invoke.run_tool，带参数校验与结构化错误）
 - write 节点：把取到的数据交给 LLM 生成报告正文
 
-工具层就绪后，execute 节点自动生效；报告模板/合规校验后续迭代。
+当前仍是骨架：报告八章结构、数字白名单溯源、合规校验（方案 §6）尚未落地。
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from loguru import logger
 from langgraph.graph import StateGraph, END
 
 from app.harness.state import AgentState
-from app.harness import registry as tools_registry
 from app.harness.llm import get_llm
 
 # 财报报告的标准计划骨架（报告结构固定，模板化省一次 LLM 规划）
@@ -73,8 +72,15 @@ def _build_execute_node():
         if "company" not in args and entities.get("company"):
             args = {**args, "company": entities["company"]}
 
-        result = tools_registry.execute_tool(action, args)
-        collected.append({"step": step, "result": result.get("reply", "")})
+        from app.harness.invoke import run_tool
+
+        result = run_tool(action, args)
+        # 记录状态：无数据/故障要在写作阶段显式标注，不能让 LLM 拿空数据硬写
+        collected.append({
+            "step": step,
+            "result": result.reply,
+            "status": result.status.value,
+        })
         return {"collected": collected, "plan_index": idx + 1}
 
     return execute_node
@@ -85,7 +91,7 @@ def _build_write_node():
         """写作节点：把采集的数据交给 LLM 生成报告正文"""
         collected = state.get("collected") or []
         data_block = "\n\n".join(
-            f"【步骤{it['step'].get('step')}：{it['step'].get('desc')}】\n{it['result']}"
+            f"【步骤{it['step'].get('step')}：{it['step'].get('desc')}｜状态 {it.get('status', 'ok')}】\n{it['result']}"
             for it in collected
         ) or "（未采集到数据）"
 

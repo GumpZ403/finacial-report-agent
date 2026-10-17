@@ -19,6 +19,7 @@ from langgraph.graph import StateGraph, END
 
 from app.harness.state import AgentState
 from app.harness import registry as tools_registry
+from app.harness.invoke import run_tool
 from app.harness.llm import get_llm
 
 # 默认最大工具调用轮数（防 LLM 绕圈）
@@ -125,14 +126,11 @@ def _build_tool_node():
             fn = tc.get("function") or {}
             name = fn.get("name") or ""
             args = _parse_args(fn.get("arguments"))
-            try:
-                result = tools_registry.execute_tool(name, args)
-                content = _serialize_result(result)
-                logger.info(f"[ReAct] 第{round_no}轮 执行工具: {name} args={args}")
-            except Exception as e:
-                # 工具异常 → 也回填为 tool 消息，让 LLM 自行决定重试/放弃
-                content = f"工具执行失败: {e}"
-                logger.warning(f"[ReAct] 第{round_no}轮 工具 {name} 执行失败: {e}")
+            # 统一走 harness.invoke：参数校验 / 结构化错误 / 重试 / 熔断
+            result = run_tool(name, args)
+            content = result.to_llm_content(MAX_TOOL_CONTENT)
+            logger.info(f"[ReAct] 第{round_no}轮 工具 {name} → {result.status.value} "
+                        f"({result.elapsed_ms}ms, {result.attempts} 次)")
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id") or "",

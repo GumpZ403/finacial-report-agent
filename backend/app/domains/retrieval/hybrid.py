@@ -18,8 +18,17 @@ from app.platform.settings import get_settings
 from app.domains.retrieval.vector import get_vector_store
 from app.domains.financial.repository import get_db
 
-# BM25 分词结果磁盘缓存目录（构建 1 万条中文分词约 2-4 分钟，缓存后秒级恢复）
-_BM25_CACHE_DIR = Path(__file__).resolve().parents[2] / "storage" / "cache"
+
+def _bm25_cache_dir() -> Path:
+    """BM25 分词结果磁盘缓存目录（构建 1 万条中文分词约 2-4 分钟，缓存后秒级恢复）
+
+    历史 bug：这里原先是 `Path(__file__).resolve().parents[2] / "storage" / "cache"`，
+    解析成 `backend/app/storage/cache`（不存在），缓存**从未真正生效**。
+    现统一走 settings.storage_dir（= <repo>/storage），与其它运行时数据同目录。
+    """
+    cache_dir = get_settings().storage_dir / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 class BM25Index:
@@ -38,8 +47,7 @@ class BM25Index:
 
     @staticmethod
     def _cache_path(n: int) -> Path:
-        _BM25_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        return _BM25_CACHE_DIR / f"bm25_tokenized_{n}.pkl"
+        return _bm25_cache_dir() / f"bm25_tokenized_{n}.pkl"
 
     def build(self, chunks: list[dict]):
         """从 chunk 列表构建 BM25 索引（构建后写磁盘缓存）"""

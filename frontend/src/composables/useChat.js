@@ -100,7 +100,8 @@ async function sendMessage(text) {
     const resp = await fetch('/api/agent/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: q }),
+      // session_id 让后端按会话隔离记忆（此前不传，所有标签页共用一份上下文）
+      body: JSON.stringify({ query: q, session_id: s.id }),
     })
     if (!resp.ok || !resp.body) {
       throw new Error(`后端返回 ${resp.status}`)

@@ -1,15 +1,18 @@
 """工具注册表：Agent 与工具层之间的统一契约
 
-- TOOLS_SCHEMAS：注册给 LLM 的 function calling schema（classify / ReAct 循环用）
-- TOOLS_MAP：工具名 → 可执行函数
-- register_tool()：工具层（app/tools/）实现后调用注册
+- TOOLS_SCHEMAS：注册给 LLM 的 function calling schema（classify 预选 / ReAct 循环用）
+- TOOLS_MAP：工具名 → 可执行函数（签名统一 `(args: dict, on_stage=None) -> dict`）
+- register_tool()：工具模块 import 时自动注册（见 domains/*/tools/）
 
-工具层就绪前，注册表为空——graph 中的工具节点会返回友好提示而不是崩溃。
+**执行**不在本模块内：统一走 harness/invoke.run_tool()，那里做参数校验、
+结构化错误、重试与熔断。本模块只负责“登记”和“查询”。
+
+工具层就绪前注册表为空——图里的工具节点会返回友好提示而不是崩溃。
 """
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable
+from typing import Callable
 
 from loguru import logger
 
@@ -50,23 +53,14 @@ def get_tool(name: str) -> Callable[..., dict] | None:
     return TOOLS_MAP.get(name)
 
 
+def get_schema(name: str) -> dict | None:
+    """按名字取工具 schema（参数校验与提示词构造用）；未注册返回 None"""
+    for s in TOOLS_SCHEMAS:
+        if s.get("function", {}).get("name") == name:
+            return s
+    return None
+
+
 def list_tool_names() -> list[str]:
     """当前已注册的工具名列表（调试/展示用）"""
     return sorted(TOOLS_MAP.keys())
-
-
-def execute_tool(name: str, args: dict | None = None, on_stage=None) -> dict:
-    """执行一个已注册工具（统一入口，带异常兜底）
-
-    Returns:
-        工具原始返回 dict；未注册/异常时返回 {"reply": 友好提示, "meta": {}}
-    """
-    handler = TOOLS_MAP.get(name)
-    if handler is None:
-        logger.warning(f"[ToolsRegistry] 调用未注册工具: {name}")
-        return {"reply": f"工具 {name} 尚未注册（工具层未就绪）", "meta": {}}
-    try:
-        return handler(args or {}, on_stage)
-    except Exception as e:
-        logger.exception(f"[ToolsRegistry] 工具 {name} 执行异常")
-        return {"reply": f"工具 {name} 执行失败：{e}", "meta": {"tool_error": str(e)}}

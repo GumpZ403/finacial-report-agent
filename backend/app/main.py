@@ -60,10 +60,13 @@ def create_app() -> FastAPI:
     )
 
     # CORS
+    # 注意：allow_origins=["*"] 与 allow_credentials=True 在规范上互斥，
+    # 浏览器会直接拒绝带凭据的跨域请求。本服务不用 Cookie 鉴权（无会话 Cookie），
+    # 所以用通配 + 关闭凭据；需要带凭据时改成显式 origin 白名单。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
