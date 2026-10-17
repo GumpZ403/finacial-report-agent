@@ -213,6 +213,29 @@ class ConversationStore:
         finally:
             conn.close()
 
+    def load_turns(self, session_id: str, limit: int = 20) -> list[dict]:
+        """最近 N 条消息（正序，含 meta_json 解析结果）—— /trace 与评测用"""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT turn_index, role, content, meta_json, created_at "
+                "FROM conversations WHERE session_id = ? "
+                "ORDER BY turn_index DESC LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+        finally:
+            conn.close()
+        out = []
+        for r in reversed(rows):
+            out.append({
+                "turn_index": r["turn_index"],
+                "role": r["role"],
+                "content": r["content"],
+                "meta": json.loads(r["meta_json"]) if r["meta_json"] else None,
+                "created_at": r["created_at"],
+            })
+        return out
+
     def get_session(self, session_id: str) -> dict | None:
         conn = self._connect()
         try:

@@ -217,6 +217,22 @@ def agent_clear(session_id: str = Query(DEFAULT_SESSION_ID, description="会话I
     }
 
 
+@router.get("/trace")
+def agent_trace(session_id: str = Query(DEFAULT_SESSION_ID, description="会话ID"),
+                limit: int = Query(20, ge=1, le=200)):
+    """每轮对话的结构化轨迹（tools_called / steps / stop_reason / 耗时）
+
+    这些字段由对话循环自己产出，写进 conversations.meta_json；
+    评测脚本与排障都从这里读，不依赖日志。
+    """
+    turns = get_conversation_store().load_turns(session_id, limit)
+    runs = [
+        {"turn": t["turn_index"], "at": t["created_at"], **(t["meta"] or {})}
+        for t in turns if t["role"] == "assistant" and t["meta"]
+    ]
+    return {"session_id": session_id, "runs": runs}
+
+
 @router.get("/flow")
 def agent_flow():
     """主流程结构（调试用：一眼看清有哪些节点与路由）"""

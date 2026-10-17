@@ -5,4 +5,5 @@
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+markers = ["eval: 需要真实数据库的评测（pytest --eval 运行）"]
 filterwarnings = ["ignore::DeprecationWarning"]
