@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -12,13 +13,11 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from app.domains.financial.dates import years_ago
 from app.domains.financial.repository import get_db, normalize_code, SOURCE_EM
 from app.platform.settings import get_settings
 
-# 统一期次窗口：只保留最近 N 年（东财三表返回全历史，由 build_reports() 本地裁剪）
-# 注：repository.prune_out_of_window() 的默认值必须与此一致（同一决策的两处落点）
-PERIOD_WINDOW_YEARS = 10
-
+# 期次窗口唯一来源：Settings.PERIOD_WINDOW_YEARS（ingest 裁剪与 prune 清理共用）
 # 三表的固定 key：status 字典与 fetch_status 字符串都用它，顺序稳定便于比对
 STATEMENT_KEYS = ("balance", "profit", "cashflow")
 
@@ -191,6 +190,15 @@ def _normalize_end(value) -> str | None:
     return None
 
 
+# 永久性错误：接口签名变了 / 代码 bug，重试没有意义
+_PERMANENT_ERRORS = (ImportError, AttributeError, TypeError, KeyError, NotImplementedError)
+
+
+def _retryable(exc: BaseException) -> bool:
+    """是否值得重试（网络抖动、限频、超时等一律重试）"""
+    return not isinstance(exc, _PERMANENT_ERRORS)
+
+
 def _compact_ts(ts: str) -> str:
     """'2026-10-17 16:44:30' → '20261017-164430'（文件名用，字典序即时间序）"""
     digits = "".join(ch for ch in str(ts or "") if ch.isdigit())
@@ -247,8 +255,11 @@ def _to_frame(payload) -> list[dict]:
 class AkshareEMAdapter:
     """akshare 东方财富三表实现（单源：资产负债表 + 利润表 + 现金流量表）"""
 
-    def __init__(self, delay: float = 0.4, raw_dir: Path | None = None):
-        self.delay = delay                     # 请求间隔（秒），限频保护
+    def __init__(self, delay: float = 0.4, raw_dir: Path | None = None,
+                 max_attempts: int = 3, backoff_base: float = 1.0):
+        self.delay = delay                     # 请求间隔（秒），限频保护（实际带 ±20% 抖动）
+        self.max_attempts = max(1, int(max_attempts))    # 单表最多尝试次数
+        self.backoff_base = max(0.0, float(backoff_base))  # 退避基数：1s → 2s → 4s
         # 走 settings：此前用 __file__ 相对层级推算，重构后漂移到
         # backend/app/domains/storage/raw（仓库根的 storage/raw 永远收不到数据）
         default_raw = get_settings().storage_dir / "raw"
@@ -283,17 +294,11 @@ class AkshareEMAdapter:
             ("利润表", "profit", ak.stock_profit_sheet_by_report_em),
             ("现金流量表", "cashflow", ak.stock_cash_flow_sheet_by_report_em),
         ]:
-            time.sleep(self.delay)
-            try:
-                df = fn(symbol=symbol)
-                if df is None or len(df) == 0:
-                    logger.warning(f"[{code}] {name} 返回空表（按失败处理）")
-                    continue
-                frames[key] = df
-                status[key] = "ok"
-                logger.info(f"[{code}] {name} 拉取成功: {df.shape}")
-            except Exception as e:
-                logger.warning(f"[{code}] {name} 拉取失败: {type(e).__name__}: {str(e)[:160]}")
+            df = self._fetch_statement(code, name, fn, symbol)
+            if df is None:
+                continue
+            frames[key] = df
+            status[key] = "ok"
 
         # 原始响应（v3）：写入前不做任何变换，可离线回放。
         # fetch_status 一并落盘 → 回放时能复现"这份快照本来就不全"
@@ -315,6 +320,50 @@ class AkshareEMAdapter:
         if result.partial:
             logger.error(f"[{code}] 采集不完整（{result.fetch_status}）：缺失的表不会写入空科目")
         return result
+
+    # ---- 采集（限频 + 重试退避）----
+
+    def _sleep_before_request(self) -> None:
+        """请求前限频；带 ±20% 抖动，避免固定节奏被风控识别"""
+        if self.delay > 0:
+            time.sleep(self.delay * random.uniform(0.8, 1.2))
+
+    def _fetch_statement(self, code: str, name: str, fn, symbol: str):
+        """单表拉取：最多 max_attempts 次，指数退避；永久性错误立即放弃
+
+        为什么不用 tenacity 装饰器：重试次数/退避要在实例上可配置，
+        测试里 backoff_base=0 就能完全不睡觉地验证尝试次数。
+        """
+        last: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            self._sleep_before_request()
+            try:
+                df = fn(symbol=symbol)
+            except Exception as e:
+                last = e
+                if not _retryable(e):
+                    logger.warning(
+                        f"[{code}] {name} 不可重试错误（{type(e).__name__}），放弃: {str(e)[:120]}")
+                    return None
+                if attempt >= self.max_attempts:
+                    break
+                wait = self.backoff_base * (2 ** (attempt - 1))
+                logger.warning(
+                    f"[{code}] {name} 第 {attempt}/{self.max_attempts} 次失败"
+                    f"（{type(e).__name__}），{wait:.1f}s 后重试")
+                if wait > 0:
+                    time.sleep(wait)
+                continue
+            if df is None or len(df) == 0:
+                logger.warning(f"[{code}] {name} 返回空表（按失败处理）")
+                return None
+            logger.info(f"[{code}] {name} 拉取成功: {df.shape}"
+                        + (f"（第 {attempt} 次尝试）" if attempt > 1 else ""))
+            return df
+        logger.warning(
+            f"[{code}] {name} 连续 {self.max_attempts} 次失败: "
+            f"{type(last).__name__}: {str(last)[:120]}")
+        return None
 
     # ---- 归一化 ----
 
@@ -376,14 +425,16 @@ class AkshareEMAdapter:
                 "conflicts": [],
             })
 
-        years = PERIOD_WINDOW_YEARS if window_years is None else window_years
+        # 窗口按**日期**判定（period_end ≥ 今天往前推 N 年），不按日历年：
+        # 按年份比大小的话，每年 1 月窗口会退化成"9 年出头"且随月份浮动
+        years = get_settings().PERIOD_WINDOW_YEARS if window_years is None else window_years
         if years:
-            cutoff = datetime.now().year - years
-            kept = [r for r in reports if int(str(r["period"])[:4]) >= cutoff]
+            cutoff = years_ago(years).isoformat()
+            kept = [r for r in reports if (r.get("period_end") or "") >= cutoff]
             if len(kept) != len(reports):
                 logger.info(
-                    f"期次窗口（近 {years} 年，≥ {cutoff}）：丢弃 {len(reports) - len(kept)} 期，"
-                    f"保留 {len(kept)} 期"
+                    f"期次窗口（近 {years} 年，period_end ≥ {cutoff}）："
+                    f"丢弃 {len(reports) - len(kept)} 期，保留 {len(kept)} 期"
                 )
             reports = kept
         return reports, []

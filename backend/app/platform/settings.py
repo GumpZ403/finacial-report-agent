@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "500"))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "100"))
 
+    # ---- 期次窗口（唯一来源：ingest 入库裁剪与 prune 清理都读它）----
+    PERIOD_WINDOW_YEARS: int = int(os.getenv("PERIOD_WINDOW_YEARS", "10"))
+
     # ---- 服务 ----
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))

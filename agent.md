@@ -132,8 +132,17 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
   中间语言，如 TOTAL_OPERATE_INCOME → revenue）；金额统一 CNY 元、比率统一小数；
   东财三表均为**累计口径**（is_single_quarter=0）
 - **不再做**：新浪双源（已退役）、双源交叉验证（单次/累计口径对不上）、L0 回算死检查
-- **期次窗口**：统一**近 10 年**（`akshare_em.PERIOD_WINDOW_YEARS = 10`，与
-  `repository.prune_out_of_window(years=10)` 必须同步改）；raw 快照保存全历史，只有入库按窗口裁剪
+- **期次窗口**：唯一来源 `Settings.PERIOD_WINDOW_YEARS`（默认 10，`.env` 可改）；
+  `build_reports()` 入库裁剪与 `prune_out_of_window()` 清理都读它，不再有两处硬编码。
+  判定按**日期**（`period_end ≥ 今天往前推 N 年`，见 `domains/financial/dates.py:years_ago`），
+  不按年份字符串比大小——否则每年 1 月窗口会退化成"9 年出头"。raw 快照保存全历史，只有入库按窗口裁剪
+- **采集重试**：单表最多 3 次、指数退避（1s→2s→4s）、请求间隔带 ±20% 抖动；
+  永久性错误（`ImportError/AttributeError/TypeError/KeyError`，即接口签名变了）立即放弃，不做无意义重试
+- **增量拉取**：若某家最新期次 == 按披露日历应已发布的期次（`dates.py:latest_disclosed_period`，
+  一季报 4/30 / 半年报 8/31 / 三季报 10/31，1~4 月只认上年三季报），且上次采集完整、
+  `FRESH_DAYS=7` 天内拉过 → 本轮跳过（`--force` 强制重拉）
+- **窗口清理**：`fetch_slice.py` 每拉完一家就对该家 `prune_out_of_window(company_code=...)`，
+  只清本案公司（局部 `--limit` 运行不会误删别家），`--no-prune` 可关闭
 - **采集完整性**：`FetchResult.status` 逐表记 ok/failed，任一表失败 → `partial`，
   写 `financial_periods.fetch_status`；缺失的表**不会**被当成"空科目"入库，`fetch_slice.py`
   把 partial 计入失败清单并以非 0 退出码结束

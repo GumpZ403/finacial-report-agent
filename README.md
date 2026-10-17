@@ -73,6 +73,9 @@ cd backend
 
 ```powershell
 ..\.venv\Scripts\python.exe scripts\fetch_slice.py --limit 20   # 拉取 20 家切片（东财三表，网络）并跑 L0
+#   增量：最新披露期次已入库且 7 天内拉过则跳过；--force 强制重拉；--no-prune 跳过窗口清理
+#   退出码：任一家失败／采集不完整 → 1（便于定时任务判断）
+#   窗口：Settings.PERIOD_WINDOW_YEARS（默认 10 年，.env 可改）
 ..\.venv\Scripts\python.exe -m app.domains.financial.quality                 # L0 全库校验并写 data_quality_log
 ..\.venv\Scripts\python.exe -m app.domains.financial.textify --all --reindex  # 全量文本化 + 重建向量库
 ..\.venv\Scripts\python.exe -m app.domains.financial.textify --dry --limit 2  # 只看文本片段质量，不入库

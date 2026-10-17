@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, func, text as sa_text
 from sqlalchemy.orm import sessionmaker, Session
 
 from app.platform.settings import get_settings
+from app.domains.financial.dates import years_ago
 from app.domains.financial.scope import normalize_template
 from app.domains.financial.models import (
     Base,
@@ -508,29 +509,39 @@ class Database:
         logger.info(f"宽表重算完成：{len(period_ids)} 报告期 / {total} 指标")
         return {"reports": len(period_ids), "metrics": total}
 
-    def prune_out_of_window(self, years: int = 10, dry_run: bool = False) -> dict:
-        """清理期次窗口外的历史数据（方案 §3 第 7 条；2026-09-22 决定统一为近十年）
+    def prune_out_of_window(self, years: int | None = None, dry_run: bool = False,
+                            company_code: str | None = None) -> dict:
+        """清理期次窗口外的历史数据（方案 §3 第 7 条）
 
-        - 删除对象：`period` 年份早于 (当前年 − years) 的报告期，及其指标行与宽表行
-        - 窗口外数据在 `storage/raw/<code>.json` 里仍有留痕，可用 `replay()` 回放重建
+        - 窗口取 `Settings.PERIOD_WINDOW_YEARS`（唯一来源；显式传 years 可覆盖）
+        - 按 **period_end 日期** 判定越界（`period_end < 今天往前推 years 年`），
+          不再按 `period` 的年份字符串比大小——那样每年 1 月窗口会退化且随月份浮动
+        - `company_code` 给定时只清该公司（fetch_slice 逐家落实窗口用，避免局部运行误删别家）
+        - dry_run=True 只统计不删
+        - 窗口外数据在 `storage/raw/<code>/` 里仍有留痕，可用 `replay()` 回放重建
         - 幂等：重复执行只会匹配到"还没被清掉的越界期"，无越界期时返回 0
         """
-        cutoff = datetime.now().year - years
+        years = get_settings().PERIOD_WINDOW_YEARS if years is None else years
+        cutoff = years_ago(years).isoformat()
+        cond = "period_end IS NOT NULL AND period_end != '' AND period_end < :c"
+        params: dict = {"c": cutoff}
+        if company_code:
+            cond += (" AND company_id IN (SELECT company_id FROM company_master"
+                     " WHERE code = :code)")
+            params["code"] = normalize_code(company_code)
         with self.get_session() as session:
             ids = [r[0] for r in session.execute(sa_text(
-                "SELECT period_id FROM financial_periods "
-                "WHERE CAST(substr(period, 1, 4) AS INTEGER) < :c"
-            ), {"c": cutoff}).all()]
+                f"SELECT period_id FROM financial_periods WHERE {cond}"
+            ), params).all()]
             if not ids:
-                logger.info(f"期次窗口清理：无越界数据（窗口 ≥ {cutoff} 年）")
-                return {"cutoff_year": cutoff, "reports": 0, "metrics": 0, "core": 0}
+                logger.info(f"期次窗口清理：无越界数据（period_end ≥ {cutoff}）")
+                return {"cutoff": cutoff, "reports": 0, "metrics": 0, "core": 0}
             if dry_run:
                 n_m = session.execute(sa_text(
                     "SELECT COUNT(*) FROM financial_metrics WHERE period_id IN ("
-                    "  SELECT period_id FROM financial_periods "
-                    "  WHERE CAST(substr(period, 1, 4) AS INTEGER) < :c)"
-                ), {"c": cutoff}).scalar()
-                return {"cutoff_year": cutoff, "reports": len(ids),
+                    f"  SELECT period_id FROM financial_periods WHERE {cond})"
+                ), params).scalar()
+                return {"cutoff": cutoff, "reports": len(ids),
                         "metrics": int(n_m or 0), "core": None, "dry_run": True}
             n_m = n_c = 0
             for i in range(0, len(ids), 500):          # 分块，避开 SQLite 变量上限
@@ -545,10 +556,29 @@ class Database:
                     f"DELETE FROM financial_periods WHERE period_id IN ({ph})"), params)
             session.commit()
         logger.warning(
-            f"期次窗口清理（< {cutoff} 年）：删除报告期 {len(ids)} / "
+            f"期次窗口清理（period_end < {cutoff}）：删除报告期 {len(ids)} / "
             f"指标 {n_m} / 宽表 {n_c}；窗口外原始数据仍可在 storage/raw/ 回放"
         )
-        return {"cutoff_year": cutoff, "reports": len(ids), "metrics": n_m, "core": n_c}
+        return {"cutoff": cutoff, "reports": len(ids), "metrics": n_m, "core": n_c}
+
+    def get_latest_period(self, company_code: str) -> dict | None:
+        """某公司最新一个报告期（按 period_end 倒序）——增量拉取用"""
+        code = normalize_code(company_code)
+        with self.get_session() as session:
+            row = (session.query(FinancialPeriod)
+                   .join(CompanyMaster,
+                         CompanyMaster.company_id == FinancialPeriod.company_id)
+                   .filter(CompanyMaster.code == code)
+                   .order_by(FinancialPeriod.period_end.desc())
+                   .first())
+            if row is None:
+                return None
+            return {
+                "period": row.period,
+                "period_end": row.period_end or "",
+                "fetch_status": row.fetch_status or "ok",
+                "fetched_at": row.fetched_at or "",
+            }
 
     # ---- 数据层内部读取（供 textify / quality 使用）----
 

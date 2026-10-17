@@ -9,10 +9,12 @@
 """
 import sys
 import types
+from datetime import timedelta
 
 import pytest
 
 from app.domains.financial.ingest import akshare_em as ing
+from app.domains.financial.dates import years_ago
 from app.domains.financial.ingest.akshare_em import (
     AkshareEMAdapter,
     FetchResult,
@@ -49,7 +51,8 @@ class FakeRawDB:
 def adapter(tmp_path, monkeypatch):
     fake = FakeRawDB()
     monkeypatch.setattr(ing, "get_db", lambda: fake)
-    a = AkshareEMAdapter(raw_dir=tmp_path / "raw", delay=0)
+    # backoff_base=0：重试不睡觉，否则每个失败用例要等 1+2 秒
+    a = AkshareEMAdapter(raw_dir=tmp_path / "raw", delay=0, backoff_base=0)
     a.fake_db = fake
     return a
 
@@ -248,6 +251,69 @@ class TestFetchStatus:
         assert r.fetch_status == "partial:balance,profit,cashflow"
 
 
+# ------------------------------------------------- 重试与退避（P1-4）
+class TestRetry:
+    def _ak_with(self, endpoint_name, fn):
+        ak = _fake_ak()
+        setattr(ak, endpoint_name, fn)
+        return ak
+
+    def test_retries_then_succeeds(self, adapter, monkeypatch):
+        calls = {"n": 0}
+
+        def flaky(symbol):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise ConnectionError("网络抖动")
+            return FakeFrame([PROFIT_ROW])
+
+        monkeypatch.setitem(sys.modules, "akshare",
+                            self._ak_with("stock_profit_sheet_by_report_em", flaky))
+        r = adapter.fetch_indicators("600519")
+        assert r.status["profit"] == "ok"
+        assert calls["n"] == 3
+
+    def test_permanent_error_not_retried(self, adapter, monkeypatch):
+        """接口签名变了（TypeError）重试没用，应立刻放弃"""
+        calls = {"n": 0}
+
+        def broken(symbol):
+            calls["n"] += 1
+            raise TypeError("unexpected keyword argument")
+
+        monkeypatch.setitem(sys.modules, "akshare",
+                            self._ak_with("stock_profit_sheet_by_report_em", broken))
+        r = adapter.fetch_indicators("600519")
+        assert r.status["profit"] == "failed"
+        assert calls["n"] == 1
+
+    def test_gives_up_after_max_attempts(self, adapter, monkeypatch):
+        calls = {"n": 0}
+
+        def always_bad(symbol):
+            calls["n"] += 1
+            raise ConnectionError("一直失败")
+
+        monkeypatch.setitem(sys.modules, "akshare",
+                            self._ak_with("stock_cash_flow_sheet_by_report_em", always_bad))
+        r = adapter.fetch_indicators("600519")
+        assert r.status["cashflow"] == "failed"
+        assert r.partial and calls["n"] == adapter.max_attempts
+
+    def test_empty_frame_is_not_retried(self, adapter, monkeypatch):
+        """空表不是异常，按失败处理但不必重试"""
+        calls = {"n": 0}
+
+        def empty(symbol):
+            calls["n"] += 1
+            return FakeFrame([])
+
+        monkeypatch.setitem(sys.modules, "akshare",
+                            self._ak_with("stock_profit_sheet_by_report_em", empty))
+        r = adapter.fetch_indicators("600519")
+        assert r.status["profit"] == "failed" and calls["n"] == 1
+
+
 # --------------------------------------------- 归一化与窗口（原有行为锁定）
 class TestBuildReports:
     def _profit_payload(self, periods, value=100.0):
@@ -293,6 +359,15 @@ class TestBuildReports:
         metrics = reports[0]["metrics"]
         assert "revenue" not in metrics and "operate_cost" not in metrics
         assert metrics["net_profit"] == 50.0
+
+    def test_window_uses_dates_not_calendar_years(self, adapter):
+        """窗口按 period_end 日期判定：恰好落在边界的那一期要保留，早一天才丢"""
+        cutoff = years_ago(10)
+        inside = cutoff.isoformat()
+        outside = (cutoff - timedelta(days=1)).isoformat()
+        payload = self._profit_payload([outside, inside])
+        reports, _ = adapter.build_reports(profit=payload)
+        assert [r["period_end"] for r in reports] == [inside]
 
     def test_unparseable_period_skipped(self, adapter):
         payload = {"rows": [{"REPORT_DATE": "坏数据", "TOTAL_OPERATE_INCOME": 1.0},
