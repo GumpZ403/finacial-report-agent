@@ -219,16 +219,24 @@ onMounted(async () => {
 }
 
 /* 对话流滚动区：只有这里滚动，输入框保持底部固定 */
+/* 不用 smooth：初始定位和流式跟随需要即时到位 */
 .messages {
   flex: 1;
   overflow-y: auto;
-  scroll-behavior: smooth;
 }
 
 .messages-inner {
   max-width: 720px;
   margin: 0 auto;
   padding: 28px 24px 16px;
+}
+
+/* 中窄宽度：三列卡片过窄，收成单列保持可读 */
+@media (max-width: 1100px) {
+  .suggestions {
+    grid-template-columns: 1fr;
+    max-width: 620px;
+  }
 }
 
 /* 窄屏：顶栏出现，示例改单列 */

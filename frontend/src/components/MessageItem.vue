@@ -118,10 +118,6 @@ const isError = computed(
   letter-spacing: 0.01em;
 }
 
-.msg-user .msg-label {
-  justify-content: flex-end;
-}
-
 .ai-dot {
   width: 6px;
   height: 6px;

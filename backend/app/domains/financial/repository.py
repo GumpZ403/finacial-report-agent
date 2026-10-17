@@ -429,6 +429,7 @@ class Database:
                 m.metric_code: {
                     "metric_code": m.metric_code,
                     "name_cn": m.name_cn,
+                    "aliases": list(m.aliases or []),
                     "unit_type": m.unit_type,
                     "formula": m.formula or "",
                     "industry_scope": m.industry_scope or "general",

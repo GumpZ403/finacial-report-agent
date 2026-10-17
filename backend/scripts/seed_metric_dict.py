@@ -153,6 +153,20 @@ SEED += [
     ('roic', '投入资本回报率(税前近似)', ['投入资本回报率(税前近似)'], 'ratio', 'positive', 'operating_profit / (total_equity + short_term_loan + long_term_loan + bonds_payable + noncurrent_liab_due_1y)', 'general', 1, '营业利润 / (总权益 + 有息负债)，税前近似（派生，小数）'),
 ]
 
+# ---- 别名归属修正 ----
+# 有些说法只能指向唯一指标，否则解析会张冠李戴（例如"归母净利润"不能匹配到 net_profit）。
+# 这里对少数条目做收敛覆盖；新增别名时请保持"一个说法只属于一个指标"。
+ALIAS_OVERRIDES = {
+    "net_profit": ["净利润"],
+    "net_profit_parent": ["归母净利润", "归母净利"],
+    "net_profit_deducted": ["扣非净利润", "扣非净利"],
+    "total_profit": ["利润总额"],
+    "roe": ["ROE", "净资产收益率"],
+    "roe_weighted": ["加权ROE", "加权净资产收益率"],
+    "total_equity": ["所有者权益合计", "股东权益合计"],
+    "total_parent_equity": ["归母权益", "归属于母公司股东权益"],
+}
+
 def main():
     db = get_db()
     n_metric = 0
@@ -164,7 +178,7 @@ def main():
                 s.add(m)
                 n_metric += 1
             m.name_cn = name_cn
-            m.aliases = aliases
+            m.aliases = ALIAS_OVERRIDES.get(code, aliases)
             m.unit_type = unit_type
             m.direction = direction
             m.formula = formula

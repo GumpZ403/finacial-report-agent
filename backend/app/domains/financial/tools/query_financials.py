@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from app.domains.financial.display import fmt_value
 from app.domains.financial.repository import get_db
+from app.domains.financial.services.resolver import (
+    resolve_company, resolve_metric,
+)
 from app.harness import registry as tools_registry
 from app.harness.invoke import no_data
 
@@ -22,38 +25,29 @@ class FinancialQueryTool:
         self.db = get_db()
         self._name_to_code: dict[str, str] | None = None
 
-    def _metric_map(self) -> dict[str, str]:
-        """指标中文名 → metric_code 映射（来自 metric_dict，懒加载）"""
-        if self._name_to_code is None:
-            meta = self.db.list_metric_dict()
-            self._name_to_code = {
-                m["name_cn"]: code for code, m in meta.items() if m.get("name_cn")
-            }
-        return self._name_to_code
+    def _resolve_metric(self, metric: str):
+        """指标说法 → Resolution（解析逻辑统一在 services/resolver.py）"""
+        return resolve_metric(metric, db=self.db)
 
-    def _resolve_metric(self, metric: str) -> str | None:
-        """指标名 → code：优先中文名匹配，其次按 code 直查"""
-        metric = (metric or "").strip()
-        if not metric:
-            return None
-        name_map = self._metric_map()
-        if metric in name_map:
-            return name_map[metric]
-        if metric in self.db.list_metric_dict():
-            return metric
-        # 模糊：包含匹配（如"毛利率"→gross_margin）
-        for cn, code in name_map.items():
-            if metric in cn or cn in metric:
-                return code
-        return None
+    def _resolve_company(self, company: str):
+        return resolve_company(company, db=self.db)
 
-    @staticmethod
-    def _resolve_company(db, company: str) -> dict | None:
-        """公司名/代码 → company_master 行"""
-        company = (company or "").strip()
-        if not company:
-            return None
-        return db.get_company(name=company) or db.get_company(code=company)
+    def _data(self, comp, metric_code: str, metric_cn: str, unit_type: str,
+              rows: list[dict]) -> list[dict]:
+        """结构化数字（前端直接渲染；模型不应搬运这些值）"""
+        items = []
+        for r in rows:
+            value = r.get(metric_code)
+            if value is None:
+                continue
+            detail = self.db.get_metrics(r["period_id"]).get(metric_code) or {}
+            items.append({
+                "label": metric_cn, "metric": metric_code,
+                "period": r.get("period"), "value": value,
+                "display": fmt_value(value, unit_type), "unit": unit_type,
+                "estimated": bool(detail.get("is_estimated")),
+            })
+        return items
 
     def _period_key(self, period: str) -> tuple[int, int, int, int]:
         """报告期排序键：年份 / 季度序 / 类型序 / 报告期原文"""
@@ -74,15 +68,26 @@ class FinancialQueryTool:
         top_n = int(args.get("top_n") or 8)
 
         # 1. 定位公司
-        comp = self._resolve_company(self.db, company)
-        if not comp:
+        comp_res = self._resolve_company(company)
+        if not comp_res.code:
+            if comp_res.candidates:
+                return no_data(
+                    f"公司「{company}」有多个候选：{', '.join(comp_res.candidates)}，请确认",
+                    candidates=comp_res.candidates)
             return no_data(f"未找到公司：{company or '（未指定）'}")
+        comp = self.db.get_company(code=comp_res.code)
         code = comp["code"]
 
-        # 2. 定位指标
-        metric_code = self._resolve_metric(metric)
-        if not metric_code:
-            return no_data(f"未找到指标：{metric or '（未指定）'}")
+        # 2. 定位指标（低置信返回候选，不猜）
+        metric_res = self._resolve_metric(metric)
+        if not metric_res.code:
+            if metric_res.candidates:
+                return no_data(
+                    f"指标「{metric}」有多个候选：{', '.join(metric_res.candidates)}，请确认",
+                    candidates=metric_res.candidates)
+            return no_data(f"未找到指标：{metric or '（未指定）'}",
+                           available=len(self.db.list_metric_dict()))
+        metric_code = metric_res.code
         meta = self.db.list_metric_dict().get(metric_code, {})
         metric_cn = meta.get("name_cn", metric_code)
         unit_type = meta.get("unit_type", "")
@@ -104,6 +109,7 @@ class FinancialQueryTool:
                 seq.append(f"- {r.get('period')}：{fmt_value(val, unit_type)}")
             return {
                 "reply": f"### {comp['name']} {metric_cn} 近 {len(seq)} 期趋势\n" + "\n".join(seq),
+                "data": self._data(comp, metric_code, metric_cn, unit_type, list(reversed(selected))),
                 "meta": {"company": comp["name"], "metric": metric_cn, "mode": "trend",
                          "periods": [r.get("period") for r in selected]},
             }
@@ -132,6 +138,8 @@ class FinancialQueryTool:
             return {
                 "reply": (f"{comp['name']} {metric_cn}：{period} {fmt_value(cur_v, unit_type)}，"
                           f"同比（{prev_period}）{change:+.1f}%"),
+                "data": self._data(comp, metric_code, metric_cn, unit_type,
+                                   [r for r in (target, prev) if r]),
                 "meta": {"company": comp["name"], "metric": metric_cn, "period": period,
                          "prev_period": prev_period, "yoy_pct": round(change, 2)},
             }
@@ -146,6 +154,7 @@ class FinancialQueryTool:
         val = target.get(metric_code)
         return {
             "reply": f"{comp['name']} {metric_cn}（{target.get('period')}）：{fmt_value(val, unit_type)}",
+            "data": self._data(comp, metric_code, metric_cn, unit_type, [target]),
             "meta": {"company": comp["name"], "metric": metric_cn,
                      "period": target.get("period"), "value": val, "unit_type": unit_type},
         }
