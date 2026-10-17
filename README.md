@@ -78,6 +78,9 @@ cd backend
 #   退出码：任一家失败／采集不完整 → 1（便于定时任务判断）
 #   窗口：Settings.PERIOD_WINDOW_YEARS（默认 10 年，.env 可改）
 ..\.venv\Scripts\python.exe -m app.domains.financial.quality                 # L0 全库校验并写 data_quality_log
+..\.venv\Scripts\python.exe -m scripts.eval.build_dataset                     # 生成 L3 真值集（200 条）
+..\.venv\Scripts\python.exe -m scripts.eval.run_l3                            # L3 结果集比对 + 基线门禁
+..\.venv\Scripts\python.exe -m scripts.eval.run_l2                            # L2 口径解析评测
 ..\.venv\Scripts\python.exe -m app.domains.financial.corpus --all --reindex  # 全量文本化 + 重建向量库
 ..\.venv\Scripts\python.exe -m app.domains.financial.corpus --dry --limit 2  # 只看文本片段质量，不入库
 ..\.venv\Scripts\python.exe -m app.domains.financial.ingest.eastmoney replay 300750 # 按当前映射离线回放原始响应
@@ -98,7 +101,8 @@ cd backend
 进度以 [agent.md](agent.md) 的里程碑表为准。当前已实现：
 - 数据层：东财三表采集 → 归一化 → SQLite（9 张业务表）→ 文本化 → 向量化
 - 编排层：自研 Flow（`backend/app/harness/flow.py`；classify 路由 + simple/react/plan 三条执行路径 + 标准 function calling 协议）
-- 工具层：query_company / query_financials（single/trend/yoy）/ query_data_stats / rag_search
+- 工具层（6 个）：query_company / query_financials（single/trend/yoy）/ query_data_stats /
+  compare_peers / dupont_analysis / detect_anomalies
 - 执行层：`harness/invoke.py` 统一做参数校验 + 结构化错误 + 有界重试 + 熔断（NO_DATA ≠ 故障）
 - 会话层：按 session_id 隔离的记忆（进程内），流式与非流式入口都会写
 - 服务层：FastAPI（SSE 流式对话）+ Vue3 前端（唯一前端，dist 由后端托管）

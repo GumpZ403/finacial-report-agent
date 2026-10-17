@@ -210,7 +210,9 @@ def _act_node():
         observations.append({"name": name, "args": args,
                              "status": result.status.value,
                              "reply": (result.reply or "")[:400],
-                             "elapsed_ms": result.elapsed_ms})
+                             "elapsed_ms": result.elapsed_ms,
+                             # 工具返回的结构化数字（前端直接渲染，模型不搬运）
+                             "items": (result.data or {}).get("data") or []})
         made = list(state.get("tool_calls_made") or [])
         made.append({"name": name, "status": result.status.value})
         seen.append(fp)
@@ -234,6 +236,10 @@ def _answer_node():
         # clarify / options 无论是否澄清都显式写回，最终 state 的键集合才是确定的
         base = {"clarify": bool(state.get("clarify")),
                 "options": list(state.get("options") or [])}
+        items = [i for o in (state.get("observations") or [])
+                 for i in (o.get("items") or [])]
+        if items and not base["clarify"]:
+            base["data"] = items
         if state.get("answer"):
             return {**base, "meta": _meta(state)}
         text = _fallback_answer(state)

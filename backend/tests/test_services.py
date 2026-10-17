@@ -112,3 +112,22 @@ class TestRealDataSmoke:
     def test_anomalies_on_real_company(self):
         from app.domains.financial.services.anomaly import detect_anomalies
         assert isinstance(detect_anomalies("600519"), list)
+
+
+# ---------------------------------------------------------------- 顺序契约
+class TestRowOrdering:
+    """list_core_rows 必须按期次倒序返回（rows[0] 是最新）
+
+    这是真实踩过的坑：没有 order_by 时 SQLite 按插入顺序返回（升序），
+    所有"取最近一期"的服务都拿到了 2016 年报。
+    """
+
+    def test_rows_are_desc(self):
+        from app.domains.financial.repository import get_db
+        rows = get_db().list_core_rows("600519")
+        assert rows[0]["period_end"] >= rows[-1]["period_end"]
+
+    def test_quote_returns_latest_period(self):
+        from app.domains.financial.services.quote import quote
+        q = quote("600519", "gross_margin")
+        assert q.period_end == "2026-06-30"

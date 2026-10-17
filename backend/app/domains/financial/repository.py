@@ -398,7 +398,12 @@ class Database:
     # ---- 数据层内部读取（供 textify / quality 使用）----
 
     def list_core_rows(self, company_code: str) -> list[dict]:
-        """某公司全部报告期的宽表行（含口径字段）"""
+        """某公司全部报告期的宽表行（含口径字段），**按期次倒序**（最新在前）
+
+        返回顺序是契约的一部分：所有取"最近一期"的服务（quote/dupont/anomaly）
+        都依赖 rows[0] 是最新。此前没有 order_by，SQLite 按插入顺序返回（升序），
+        结果"最近一期"取到 2016 年报——这是真实跑出来的 bug。
+        """
         code = normalize_code(company_code)
         cols = [c.name for c in FinancialCore.__table__.columns]
         with self.get_session() as session:
@@ -408,17 +413,20 @@ class Database:
             rows = (
                 session.query(FinancialCore, FinancialPeriod.period_type,
                               FinancialPeriod.is_single_quarter,
-                              FinancialPeriod.report_scope)
+                              FinancialPeriod.report_scope,
+                              FinancialPeriod.period_end)
                 .join(FinancialPeriod, FinancialPeriod.period_id == FinancialCore.period_id)
                 .filter(FinancialCore.company_id == comp.company_id)
+                .order_by(FinancialPeriod.period_end.desc())
                 .all()
             )
             out = []
-            for core, ptype, single, scope in rows:
+            for core, ptype, single, scope, period_end in rows:
                 d = {c: getattr(core, c) for c in cols}
                 d["period_type"] = ptype or "FY"
                 d["is_single_quarter"] = single or 0
                 d["report_scope"] = scope or "consolidated"
+                d["period_end"] = period_end or ""
                 out.append(d)
             return out
 

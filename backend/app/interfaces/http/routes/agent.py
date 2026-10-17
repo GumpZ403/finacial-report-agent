@@ -79,6 +79,8 @@ def _to_response(state: dict) -> dict:
         "reply": reply,
         "clarify": bool(state.get("clarify")),
         "options": list(state.get("options") or []),
+        # 结构化数字：前端直接渲染，避免模型复述导致数字失真
+        "data": list(state.get("data") or []),
     }
 
 

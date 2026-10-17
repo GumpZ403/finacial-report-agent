@@ -64,7 +64,8 @@ D:\A_projects\finacial-report-agent\
 │   │   │   │   ├── ingest\         #     外部数据入口
 │   │   │   │   │   ├── eastmoney.py #      东财三表采集（akshare + 重试 + gzip 快照 + 回放）
 │   │   │   │   │   └── mapping.py   #      列名映射与归一化（纯函数）
-│   │   │   │   └── tools\          #     注册给 LLM（文件名 == 工具名）
+│   │   │   │   ├── services\       #     分析服务：resolver / quote / dupont / anomaly
+│   │   │   │   └── tools\          #     注册给 LLM（文件名 == 工具名，共 6 个）
 │   │   │   ├── retrieval\          #   检索
 │   │   │   │   ├── vector.py       #     ChromaDB 向量库（financial_chunks）
 │   │   │   │   ├── hybrid.py       #     混合检索（向量 + BM25，min-max 归一加权）
