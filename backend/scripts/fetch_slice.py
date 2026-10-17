@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger
 
-from app.domains.financial.dates import latest_disclosed_period
+from app.domains.financial.dates import latest_disclosed_period, period_end_of
 from app.domains.financial.ingest.akshare_em import get_adapter
 from app.domains.financial.repository import get_db
 from app.platform.settings import get_settings
@@ -82,7 +82,11 @@ def _is_fresh(db, code: str, fresh_days: int = FRESH_DAYS) -> bool:
         rec = db.get_latest_period(code)
     except Exception:       # 查询失败就老老实实重拉，不拿增量当借口
         return False
-    if not rec or rec.get("period") != latest_disclosed_period():
+    # 用 period_end 比较，而不是 period 字符串：
+    # ① 字母序不是时间序（FY/H1/Q1/Q3）；
+    # ② 库里可能已经**比日历更新**（个别公司提前披露），那种情况也算 fresh。
+    expected = latest_disclosed_period()
+    if not rec or (rec.get("period_end") or "") < period_end_of(expected):
         return False
     if (rec.get("fetch_status") or "ok") != "ok":
         return False
@@ -93,10 +97,18 @@ def _is_fresh(db, code: str, fresh_days: int = FRESH_DAYS) -> bool:
     return (datetime.now() - fetched).days < fresh_days
 
 
-def main(limit: int = 20, force: bool = False, prune: bool = True) -> dict:
+def main(limit: int = 20, force: bool = False, prune: bool = True,
+         only: list[str] | None = None) -> dict:
     db = get_db()
     adapter = get_adapter()
     slice_list = SLICE[:limit]
+    if only:
+        # --only：断点续跑 / 只重试失败的公司（忽略 limit）
+        wanted = {str(c).strip() for c in only if str(c).strip()}
+        slice_list = [x for x in SLICE if x[0] in wanted]
+        missing = wanted - {x[0] for x in slice_list}
+        if missing:
+            logger.warning(f"--only 里不在 SLICE 中的代码已忽略: {sorted(missing)}")
     window = get_settings().PERIOD_WINDOW_YEARS
     logger.info(
         f"M1 切片开始: {len(slice_list)} 家公司 / 期次窗口近 {window} 年 / "
@@ -187,10 +199,12 @@ def main(limit: int = 20, force: bool = False, prune: bool = True) -> dict:
     # L0 走数据层唯一实现（全库校验，不再对单个报告期抽样）
     from app.domains.financial.quality import run_l0
     l0 = run_l0(db=db)
+    # 键名以 quality.run_l0() 的实际返回为准（此前引用了已被移除的 recompute_pass_rate，
+    # 会在数据已经写库之后抛 KeyError，让一次成功的拉取看起来像失败）
     logger.info(
-        f"L0（全库）: 回算 {l0['recompute_pass_rate']}% / 同比 {l0['yoy_pass_rate']}% / "
-        f"单位 {l0['unit_pass_rate']}% / 长表-宽表 {l0['core_mirror_pass_rate']}% / "
-        f"核心指标覆盖 {l0['coverage_rate']}%"
+        f"L0（全库）: 同比 {l0.get('yoy_pass_rate')}% / 单位 {l0.get('unit_pass_rate')}% / "
+        f"长表-宽表 {l0.get('core_mirror_pass_rate')}% / "
+        f"核心指标覆盖 {l0.get('coverage_rate')}% / 问题 {l0.get('issues')} 条"
     )
     return {"ok": ok_companies, "skipped": skipped, "failed": failures,
             "reports": total_reports, "metrics": total_metrics,
@@ -198,7 +212,7 @@ def main(limit: int = 20, force: bool = False, prune: bool = True) -> dict:
 
 
 if __name__ == "__main__":
-    lim, force, prune = 20, False, True
+    lim, force, prune, only = 20, False, True, None
     args = sys.argv[1:]
     i = 0
     while i < len(args):
@@ -212,7 +226,10 @@ if __name__ == "__main__":
         elif a == "--no-prune":
             prune = False
             i += 1
+        elif a == "--only":
+            only = [c.strip() for c in args[i + 1].split(",") if c.strip()]
+            i += 2
         else:
-            raise SystemExit(f"未知参数: {a}（支持 --limit N / --force / --no-prune）")
-    summary = main(lim, force=force, prune=prune)
+            raise SystemExit(f"未知参数: {a}（支持 --limit N / --force / --no-prune / --only 代码,代码）")
+    summary = main(lim, force=force, prune=prune, only=only)
     raise SystemExit(0 if not summary["failed"] else 1)

@@ -19,6 +19,20 @@ def years_ago(years: int, today: date | None = None) -> date:
         return d.replace(year=d.year - n, day=28)
 
 
+_PERIOD_END = {"Q1": (3, 31), "H1": (6, 30), "Q3": (9, 30), "FY": (12, 31)}
+
+
+def period_end_of(period: str) -> str:
+    """'2026H1' → '2026-06-30'
+
+    用来比较"库里最新期次是否已经追平披露日历"——不能直接比 period 字符串：
+    "2026FY" < "2026H1" < "2026Q1" < "2026Q3" 是按字母序，不是时间序。
+    """
+    year, suffix = str(period)[:4], str(period)[4:]
+    month, day = _PERIOD_END.get(suffix, (12, 31))
+    return f"{year}-{month:02d}-{day:02d}"
+
+
 def latest_disclosed_period(today: date | None = None) -> str:
     """按披露截止日推算"最新已披露期次"，返回与 `financial_periods.period` 同格式
 

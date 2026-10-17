@@ -73,6 +73,7 @@ cd backend
 
 ```powershell
 ..\.venv\Scripts\python.exe scripts\fetch_slice.py --limit 20   # 拉取 20 家切片（东财三表，网络）并跑 L0
+#   --only 600519,000858 只跑指定公司（断点续跑 / 只重试失败）；--force 忽略增量
 #   增量：最新披露期次已入库且 7 天内拉过则跳过；--force 强制重拉；--no-prune 跳过窗口清理
 #   退出码：任一家失败／采集不完整 → 1（便于定时任务判断）
 #   窗口：Settings.PERIOD_WINDOW_YEARS（默认 10 年，.env 可改）
@@ -103,9 +104,10 @@ cd backend
 - 服务层：FastAPI（SSE 流式对话）+ Vue3 前端（唯一前端，dist 由后端托管）
 
 **已知问题 / 待办**：
-- **本地库当前是空库**：`storage/financial.db` 只有表结构（公司 0 家、指标 0 条），
-  `storage/chroma_db` 无向量；需先 `pip install akshare` 再执行 `scripts/fetch_slice.py` 拉数。
-- 会话记忆仅在进程内，重启即丢（落 SQLite 待做）。
+- **本地库已灌数**（2026-10-17，akshare 1.19.1 + 东财）：20 家公司 / 780 报告期 / 43,061 指标；
+  L0 = 同比 100% / 单位 100% / 长表-宽表 100% / 核心指标覆盖 99.27% / 问题 0。
+  `storage/chroma_db` 仍是 0 向量（文本化未跑：`python -m app.domains.financial.textify --all --reindex`）。
+- 会话记忆：**写已落 SQLite**（`storage/conversations.db`），读仍走进程内 Memory，重启后历史不会回到上下文。
 - 报告阶段仍是“模板 DAG + 一次长文生成”，八章结构 / 数字白名单溯源 / 投研合规校验（方案 §6）未落地；
   写作子代理（多 agent 协作）只有接口约定（`domains/report/agents/`）。
 - 评测体系（方案 §8 L0~L4）尚未落地，`scripts/eval/` 未建。

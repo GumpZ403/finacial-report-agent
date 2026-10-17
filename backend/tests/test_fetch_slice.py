@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from scripts import fetch_slice
+from app.domains.financial.dates import period_end_of
 
 
 class FakeDB:
@@ -29,10 +30,10 @@ def _fixed_calendar(monkeypatch):
     monkeypatch.setattr(fetch_slice, "latest_disclosed_period", lambda: "2025Q3")
 
 
-def _rec(period="2025Q3", status="ok", fetched=None):
+def _rec(period="2025Q3", status="ok", fetched=None, period_end=None):
     return {
         "period": period,
-        "period_end": "2025-09-30",
+        "period_end": period_end or period_end_of(period),
         "fetch_status": status,
         "fetched_at": fetched or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -47,6 +48,14 @@ class TestIsFresh:
 
     def test_older_period_needs_refetch(self):
         assert fetch_slice._is_fresh(FakeDB(_rec(period="2025H1")), "600519") is False
+
+    def test_db_ahead_of_calendar_is_fresh(self):
+        """个别公司提前披露（库里是 Q3，日历只要求 H1）→ 不该再拉"""
+        assert fetch_slice._is_fresh(FakeDB(_rec(period="2026Q3")), "600519") is True
+
+    def test_period_string_order_is_not_used(self):
+        """FY 比 Q3 新，但字符串 FY < Q3 —— 用字符串比较会误判为"落后"而重拉"""
+        assert fetch_slice._is_fresh(FakeDB(_rec(period="2025FY")), "600519") is True
 
     def test_partial_needs_refetch(self):
         assert fetch_slice._is_fresh(

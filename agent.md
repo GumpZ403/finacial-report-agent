@@ -140,14 +140,18 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
   永久性错误（`ImportError/AttributeError/TypeError/KeyError`，即接口签名变了）立即放弃，不做无意义重试
 - **增量拉取**：若某家最新期次 == 按披露日历应已发布的期次（`dates.py:latest_disclosed_period`，
   一季报 4/30 / 半年报 8/31 / 三季报 10/31，1~4 月只认上年三季报），且上次采集完整、
-  `FRESH_DAYS=7` 天内拉过 → 本轮跳过（`--force` 强制重拉）
+  `FRESH_DAYS=7` 天内拉过 → 本轮跳过（`--force` 强制重拉）。
+  比较用 `period_end`（`dates.py:period_end_of`）而不是 `period` 字符串：字母序不是时间序
+  （`2026FY < 2026H1 < 2026Q1 < 2026Q3`），而且个别公司会提前披露，库里比日历更新也算 fresh
 - **窗口清理**：`fetch_slice.py` 每拉完一家就对该家 `prune_out_of_window(company_code=...)`，
   只清本案公司（局部 `--limit` 运行不会误删别家），`--no-prune` 可关闭
 - **采集完整性**：`FetchResult.status` 逐表记 ok/failed，任一表失败 → `partial`，
   写 `financial_periods.fetch_status`；缺失的表**不会**被当成"空科目"入库，`fetch_slice.py`
   把 partial 计入失败清单并以非 0 退出码结束
-- **历史切片记录（当前库已清空）**：20 家公司（7 行业）/ 833 报告期 / 45,964 指标 / 指标字典 75 条 ——
-  重新灌数请跑 `scripts/fetch_slice.py`（需先装 akshare）
+- **当前库（2026-10-17 真跑：akshare 1.19.1 + 东财）**：20 家公司 / 780 报告期 / 43,061 指标 /
+  指标字典 75 条；raw 快照 21 份共 46.7 MB（单家 0.1~3.1 MB，最大万科 A 3.1 MB）；
+  L0：同比 100% / 单位 100% / 长表-宽表 100% / 核心指标覆盖 99.27% / 问题 0
+- **重灌/续跑**：`scripts/fetch_slice.py [--limit N] [--only 代码,代码] [--force] [--no-prune]`
 - **流水线**：采集（akshare）→ 原始落盘（storage/raw/）→ 归一化+映射 → 入库（SQLite）
   → L0 校验 → 文本化 → 向量化（ChromaDB）
 

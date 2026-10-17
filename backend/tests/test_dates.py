@@ -6,7 +6,11 @@ from datetime import date
 
 import pytest
 
-from app.domains.financial.dates import latest_disclosed_period, years_ago
+from app.domains.financial.dates import (
+    latest_disclosed_period,
+    period_end_of,
+    years_ago,
+)
 
 
 class TestYearsAgo:
@@ -45,3 +49,17 @@ class TestLatestDisclosedPeriod:
             for day in (1, 15, 28):
                 got = latest_disclosed_period(date(2026, month, day))
                 assert not got.endswith("FY")
+
+
+class TestPeriodEndOf:
+    @pytest.mark.parametrize("period,expect", [
+        ("2026Q1", "2026-03-31"), ("2026H1", "2026-06-30"),
+        ("2026Q3", "2026-09-30"), ("2026FY", "2026-12-31"),
+    ])
+    def test_known_suffixes(self, period, expect):
+        assert period_end_of(period) == expect
+
+    def test_letter_order_is_not_time_order(self):
+        """FY < H1 < Q1 < Q3 是按字母序，按时间序应反过来 —— 所以不能直接比 period 字符串"""
+        assert period_end_of("2026FY") > period_end_of("2026Q3") > period_end_of("2026H1")
+        assert "2026FY" < "2026Q3"      # 字符串比较的反例
