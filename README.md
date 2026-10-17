@@ -80,7 +80,7 @@ cd backend
 ..\.venv\Scripts\python.exe -m app.domains.financial.quality                 # L0 全库校验并写 data_quality_log
 ..\.venv\Scripts\python.exe -m app.domains.financial.textify --all --reindex  # 全量文本化 + 重建向量库
 ..\.venv\Scripts\python.exe -m app.domains.financial.textify --dry --limit 2  # 只看文本片段质量，不入库
-..\.venv\Scripts\python.exe -m app.domains.financial.ingest.akshare_em replay 300750 # 按当前映射离线回放原始响应
+..\.venv\Scripts\python.exe -m app.domains.financial.ingest.eastmoney replay 300750 # 按当前映射离线回放原始响应
 ..\.venv\Scripts\python.exe scripts\inspect_db.py all            # SQLite / Chroma 概览
 ```
 

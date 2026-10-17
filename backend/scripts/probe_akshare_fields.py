@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger  # noqa: E402
 
-from app.domains.financial.ingest.akshare_em import (  # noqa: E402
+from app.domains.financial.ingest.eastmoney import (  # noqa: E402
     ABSTRACT_MAP, INDICATOR_MAP, DEFAULT_START_YEAR, _is_na,
 )
 

@@ -14,15 +14,18 @@ from datetime import timedelta
 
 import pytest
 
-from app.domains.financial.ingest import akshare_em as ing
-from app.domains.financial.dates import years_ago
-from app.domains.financial.ingest.akshare_em import (
-    AkshareEMAdapter,
-    FetchResult,
-    _compact_ts,
+from app.domains.financial.ingest import eastmoney as ing
+from app.domains.financial.ingest.mapping import (
+    EM_PROFIT_MAP,
     _em_symbol,
     _normalize_end,
     _period_from_end,
+)
+from app.domains.financial.dates import years_ago
+from app.domains.financial.ingest.eastmoney import (
+    AkshareEMAdapter,
+    FetchResult,
+    _compact_ts,
 )
 
 RAW_V3 = {
@@ -362,7 +365,7 @@ class TestBuildReports:
         assert [r["period"] for r in reports] == ["2000FY", "2024FY"]
 
     def test_yoy_column_is_percent_to_decimal(self, adapter):
-        code = ing.EM_PROFIT_MAP["TOTAL_OPERATE_INCOME_YOY"]
+        code = EM_PROFIT_MAP["TOTAL_OPERATE_INCOME_YOY"]
         payload = {"rows": [{"REPORT_DATE": "2024-12-31",
                              "TOTAL_OPERATE_INCOME": 100.0,
                              "TOTAL_OPERATE_INCOME_YOY": 25.0}]}

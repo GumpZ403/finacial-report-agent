@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from loguru import logger
 
 from app.domains.financial.dates import latest_disclosed_period, period_end_of
-from app.domains.financial.ingest.akshare_em import get_adapter
+from app.domains.financial.ingest.eastmoney import get_adapter
 from app.domains.financial.repository import get_db
 from app.platform.settings import get_settings
 

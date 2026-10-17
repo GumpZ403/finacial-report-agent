@@ -1,4 +1,12 @@
+"""东方财富三表采集（akshare 客户端）
 
+- `DataSourceAdapter` 协议 + `AkshareEMAdapter` 实现
+- 逐表记录成功/失败（FetchResult.status）→ 三表部分失败必须可见（写入 fetch_status）
+- 限频（±20% 抖动）+ 指数退避重试；永久性错误立即放弃
+- 原始响应 gzip 快照落盘（storage/raw/<code>/<时间戳>-<checksum8>.json.gz，只增不改）+ 离线回放
+
+映射与归一化在 mapping.py；想换客户端库（tushare 等）只改本文件，不该动映射。
+"""
 from __future__ import annotations
 
 import gzip
@@ -6,16 +14,19 @@ import hashlib
 import json
 import random
 import time
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
-
-from dataclasses import dataclass
 
 from loguru import logger
 
 from app.domains.financial.dates import years_ago
-from app.domains.financial.repository import get_db, normalize_code, SOURCE_EM
+from app.domains.financial.ingest.mapping import (
+    EM_BALANCE_MAP, EM_CASHFLOW_MAP, EM_PROFIT_MAP,
+    _em_symbol, _is_na, _jsonable, _normalize_end, _period_from_end, em_rows,
+)
+from app.domains.financial.repository import SOURCE_EM, get_db, normalize_code
 from app.platform.settings import get_settings
 
 # 期次窗口唯一来源：Settings.PERIOD_WINDOW_YEARS（ingest 裁剪与 prune 清理共用）
@@ -94,104 +105,50 @@ class DataSourceAdapter(Protocol):
 #   - 现金流量表 125 科目；NETCASH_OPERATE/INVEST/FINANCE 命中；FREE_CASH_FLOW 缺失（公式派生）
 
 # 资产负债表（科目余额）
-EM_BALANCE_MAP = {
-    "TOTAL_ASSETS": "total_assets",            # 总资产（元）
-    "TOTAL_LIABILITIES": "total_liabilities",  # 总负债（元）
-    "TOTAL_EQUITY": "total_equity",            # 净资产=股东权益合计（含少数股东，元）
-    "INVENTORY": "inventory",                  # 存货（元）
-    "NOTE_ACCOUNTS_RECE": "receivable",        # 应收票据及应收账款（元；字典别名口径）
-    "GOODWILL": "goodwill",                    # 商誉（元）
-    # 2026-09-26 ③ formula 支撑科目（东财确有其列，供严格派生；值==metric_code）
-    "MONETARYFUNDS": "monetary_funds",              # 货币资金（元）→ cash_ratio 分子
-    "TOTAL_CURRENT_ASSETS": "total_current_assets",  # 流动资产合计（元）→ current_ratio/quick_ratio
-    "TOTAL_CURRENT_LIAB": "total_current_liab",      # 流动负债合计（元）→ current/quick/cash_ratio 分母
-    "TOTAL_PARENT_EQUITY": "total_parent_equity",    # 归母净资产（元）→ roe 分母
-    "NOTE_ACCOUNTS_PAYABLE": "accounts_payable",     # 应付票据及应付账款（元）→ payable_turnover 分母
-    "FIXED_ASSET": "fixed_asset",                    # 固定资产（元）→ fixed_asset_turnover 分母
-    # 同比（百分数 → ÷100 存小数）
-    "TOTAL_ASSETS_YOY": "total_assets_yoy",    # 总资产同比
-    "TOTAL_EQUITY_YOY": "equity_yoy",          # 净资产同比
-}
 
-# 利润表（累计口径）
-EM_PROFIT_MAP = {
-    "TOTAL_OPERATE_INCOME": "revenue",             # 营业总收入（元）
-    "OPERATE_COST": "operate_cost",                # 营业成本（元，真口径，非营业总成本）
-    "NETPROFIT": "net_profit",                     # 净利润（含少数股东，元）
-    "PARENT_NETPROFIT": "net_profit_parent",       # 归母净利润（元）
-    "DEDUCT_PARENT_NETPROFIT": "net_profit_deducted",  # 扣非归母净利润（元）
-    "TOTAL_OPERATE_COST": "total_operating_cost",  # 营业总成本（元，含税金及附加与期间费用）
-    # 2026-09-26 ③ formula 支撑科目（东财确有其列，供严格派生）
-    "OPERATE_PROFIT": "operating_profit",          # 营业利润（元）→ operating_margin 分子
-    "INCOME_TAX": "income_tax",                    # 所得税费用（元）→ effective_tax_rate 分子
-    "TOTAL_PROFIT": "total_profit",                # 利润总额（元）→ effective_tax_rate 分母
-    "FINANCE_EXPENSE": "finance_expense",          # 财务费用（元）→ 三费分析（原生科目）
-    "SALE_EXPENSE": "sale_expense",                # 销售费用（元）→ 三费分析（原生科目）
-    "MANAGE_EXPENSE": "manage_expense",            # 管理费用（元）→ 三费分析（原生科目）
-    "BASIC_EPS": "eps",                            # 基本每股收益（元/股，接口直给）
-    # 同比（百分数 → ÷100 存小数）
-    "TOTAL_OPERATE_INCOME_YOY": "revenue_yoy",     # 营收同比
-    "PARENT_NETPROFIT_YOY": "net_profit_yoy",      # 归母净利润同比（字典语义=归属母公司）
-    # 银行别名（2026-09-26）：银行利润表无 TOTAL_OPERATE_INCOME，
-    # 营业收入列名为 OPERATE_INCOME、营业支出为 OPERATE_EXPENSE；
-    # 因 _em_rows 首值优先，工商企业不受影响（TOTAL_* 优先）
-    "OPERATE_INCOME": "revenue",
-    "OPERATE_INCOME_YOY": "revenue_yoy",
-    "OPERATE_EXPENSE": "total_operating_cost",
-}
+@runtime_checkable
+class DataSourceAdapter(Protocol):
+    """数据源适配器协议（可替换 akshare/tushare/手工导入）"""
 
-# 现金流量表（累计口径）
-EM_CASHFLOW_MAP = {
-    "NETCASH_OPERATE": "operating_cash_flow",   # 经营活动现金流净额（元）
-    "NETCASH_INVEST": "investing_cash_flow",    # 投资活动现金流净额（元）
-    "NETCASH_FINANCE": "financing_cash_flow",   # 筹资活动现金流净额（元）
-    "CONSTRUCT_LONG_ASSET": "capex",            # 资本开支=购建固定资产/无形资产等支付的现金（元）
-    # 同比：三表科目 _YOY 无对应 metric_code（operating_cash_flow_yoy 等未入字典），暂不映射
-}
+    def list_companies(self) -> list[dict]:
+        """返回 [{code, name}]，code 为统一 6 位代码（不含后缀）"""
+        ...
+
+    def fetch_indicators(self, code: str) -> "FetchResult":
+        """返回按报告期的指标列表（含逐表采集状态，见 FetchResult）：
+
+        [{
+            "period": "2024Q3", "period_end": "2024-09-30",
+            "period_type": "Q3", "is_single_quarter": 0,
+            "metrics": {"revenue": 1.23e11, "gross_margin": 0.2531, ...},
+            "sources": {"revenue": "eastmoney", ...},
+            "conflicts": [],
+        }]
+
+        所有值已归一化（金额=元、比率=小数）；指标 code 与 metric_dict 对齐
+        """
+        ...
 
 
-def _em_symbol(code: str) -> str:
-    """6 位裸代码 → 东财接口所需的交易所前缀代码（6=沪 SH / 0、3=深 SZ / 4、8=北 BJ）"""
-    code = normalize_code(code)
-    if code.startswith("6"):
-        return f"SH{code}"
-    if code.startswith(("0", "3")):
-        return f"SZ{code}"
-    return f"BJ{code}"
+# ---------------------------------------------------------------------------
+# 东财三表英文列 → metric_code 映射表
+# ---------------------------------------------------------------------------
+# 约定：
+#   - 键 = 东财返回的英文大写列名（科目列 / _YOY 同比列）
+#   - 值 = metric_dict.metric_code
+#   - 金额科目列：东财单位即为元，入库原样
+#   - `_YOY` 列：东财给的是百分数（如 5.7459 表示 5.7459%），入库 ÷100 存小数
+#   - 未列出的科目（货币资金/流动负债/固定资产…）暂不映射，
+#     待 ③ formula 引擎统一评估新增指标后补充（cash_ratio 等派生需要）
+#
+# 实测依据（2026-09-23，600519 茅台三表 103 行≈10 年，见会话探测记录）：
+#   - 资产负债表 158 科目；TOTAL_ASSETS/LIABILITIES/EQUITY/INVENTORY/GOODWILL 全命中
+#   - 利润表 99 科目；TOTAL_OPERATE_INCOME/OPERATE_COST/NETPROFIT/
+#     PARENT_NETPROFIT/DEDUCT_PARENT_NETPROFIT 全命中；OPERATE_COST=94.7亿为真营业成本
+#   - 现金流量表 125 科目；NETCASH_OPERATE/INVEST/FINANCE 命中；FREE_CASH_FLOW 缺失（公式派生）
 
+# 资产负债表（科目余额）
 
-def _period_from_end(period_end: str) -> tuple[str, str]:
-    """'2024-03-31' 或 '20240331' → ('2024Q1', 'Q1')；'2024-12-31' → ('2024FY', 'FY')"""
-    end = str(period_end).strip()
-    if len(end) == 8 and end.isdigit():  # '20260630'
-        end = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
-    parts = end.split("-")
-    if len(parts) != 3:
-        raise ValueError(f"无法解析报告期: {period_end!r}")
-    y, m, _d = parts
-    mm = int(m)
-    if mm == 12:
-        return f"{y}FY", "FY"
-    if mm == 6:
-        return f"{y}H1", "H1"
-    if mm == 3:
-        return f"{y}Q1", "Q1"
-    if mm == 9:
-        return f"{y}Q3", "Q3"
-    return f"{y}Q{mm // 3 + 1}", f"Q{mm // 3 + 1}"
-
-
-def _normalize_end(value) -> str | None:
-    """报告期列/值 → 'YYYY-MM-DD'；无法解析返回 None"""
-    s = str(value).strip().replace("/", "-")
-    if len(s) == 8 and s.isdigit():
-        s = f"{s[:4]}-{s[4:6]}-{s[6:8]}"
-    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
-        return s[:10]
-    return None
-
-
-# 永久性错误：接口签名变了 / 代码 bug，重试没有意义
 _PERMANENT_ERRORS = (ImportError, AttributeError, TypeError, KeyError, NotImplementedError)
 
 
@@ -224,22 +181,6 @@ def _compact_ts(ts: str) -> str:
         return f"{digits[:8]}-{digits[8:14]}"
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
-
-def _is_na(v) -> bool:
-    if v is None:
-        return True
-    try:
-        return v != v                          # NaN
-    except Exception:
-        return False
-
-
-def _jsonable(v):
-    if isinstance(v, (str, int, float, bool)) or v is None:
-        return v
-    return str(v)
-
-
 def _frame_payload(df) -> dict:
     """DataFrame → 可 JSON 落盘的 {columns, rows}（原始响应，不做任何变换）"""
     if df is None:
@@ -254,21 +195,6 @@ def _frame_payload(df) -> dict:
     except Exception as e:
         logger.warning(f"原始 DataFrame 序列化失败: {e}")
         return {"columns": [], "rows": []}
-
-
-def _to_frame(payload) -> list[dict]:
-    """{columns, rows} / 行列表 / DataFrame → 行字典列表（回放无需真 DataFrame）"""
-    if payload is None:
-        return []
-    if isinstance(payload, dict):
-        return payload.get("rows") or []
-    if isinstance(payload, list):
-        return payload
-    try:
-        return [dict(r) for r in payload.to_dict(orient="records")]
-    except Exception:
-        return []
-
 
 class AkshareEMAdapter:
     """akshare 东方财富三表实现（单源：资产负债表 + 利润表 + 现金流量表）"""
@@ -385,35 +311,6 @@ class AkshareEMAdapter:
 
     # ---- 归一化 ----
 
-    def _em_rows(self, payload, col_map: dict[str, str]) -> dict[str, dict[str, float]]:
-        """单张东财表 → {period_end: {metric_code: value}}
-
-        - 行 = 报告期（REPORT_DATE），列 = 科目 / _YOY
-        - 金额列原样（东财单位为元）；_YOY 列 ÷100 存小数
-        - 只映射 col_map 声明的列，其余忽略
-        """
-        rows: dict[str, dict[str, float]] = {}
-        for rec in _to_frame(payload):
-            end = _normalize_end(rec.get("REPORT_DATE", ""))
-            if end is None:
-                continue
-            for col, code in col_map.items():
-                if col not in rec:
-                    continue
-                value = rec.get(col)
-                if _is_na(value):
-                    continue
-                try:
-                    v = float(value)
-                except (TypeError, ValueError):
-                    continue
-                if col.endswith("_YOY"):       # 东财同比列为百分数 → 小数
-                    v = v / 100.0
-                # 首值优先：工商 TOTAL_OPERATE_INCOME 优先于银行 OPERATE_INCOME 别名，
-                # 后者仅作银行 fallback（银行利润表无 TOTAL_OPERATE_INCOME 列）
-                rows.setdefault(end, {}).setdefault(code, v)
-        return rows
-
     def build_reports(self, balance=None, profit=None, cashflow=None,
                       window_years: int | None = None) -> tuple[list[dict], list[dict]]:
         """三表原始数据 → (报告期列表, 冲突列表)；不含网络调用，可离线测试/回放
@@ -426,7 +323,7 @@ class AkshareEMAdapter:
             (profit, EM_PROFIT_MAP),
             (cashflow, EM_CASHFLOW_MAP),
         ]:
-            for end, metrics in self._em_rows(payload, col_map).items():
+            for end, metrics in em_rows(payload, col_map).items():
                 merged.setdefault(end, {}).update(metrics)
 
         reports = []
@@ -570,21 +467,19 @@ class AkshareEMAdapter:
         )
         return {"code": code, "reports": n_rep, "metrics": n_met, "conflicts": len(conflicts)}
 
-
 def get_adapter() -> AkshareEMAdapter:
     return AkshareEMAdapter()
 
-
 if __name__ == "__main__":
     # 用法：
-    #   python -m app.domains.financial.ingest.akshare_em replay 300750   # 按当前映射离线回放
-    #   python -m app.domains.financial.ingest.akshare_em raw 300750      # 查看落盘原始响应的结构版本
+    #   python -m app.domains.financial.ingest.eastmoney replay 300750   # 按当前映射离线回放
+    #   python -m app.domains.financial.ingest.eastmoney raw 300750      # 查看落盘原始响应的结构版本
     import sys
 
     argv = sys.argv[1:]
     adapter = get_adapter()
     if not argv:
-        print("用法：python -m app.domains.financial.ingest.akshare_em replay <code> [<code> ...] | raw <code>")
+        print("用法：python -m app.domains.financial.ingest.eastmoney replay <code> [<code> ...] | raw <code>")
         raise SystemExit(0)
     cmd, codes = argv[0], argv[1:]
     if cmd == "replay":

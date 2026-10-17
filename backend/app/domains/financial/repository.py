@@ -1,36 +1,34 @@
-"""
-数据访问层（Repository）
+"""数据访问层（Repository）：财报数据的读写
 
-- `Database` 管理器：引擎 / 会话 / 建表 + 幂等迁移（补列、补索引、清理遗留表）
 - 财报 CRUD：公司、报告期、指标长表、核心宽表镜像、原始响应登记、质量日志
 - 口径仲裁（方案 v1.1 §4.3.6）：**源值优先，回算只做校验不覆盖，派生物仅填补空缺**
 - 所有计算在 Python/SQL 完成（不交给 LLM）
 
-分层约定：数据访问只走本模块；textify / quality 等数据层内部模块也通过这里取数。
+职责边界：
+    db.py       引擎 / 会话 / 建表迁移
+    formula.py  公式求值（纯函数）
+    display.py  单位语义与展示形态
+    dates.py    期次窗口与披露日历
 """
 from __future__ import annotations
 
-import ast
-import operator
+import re
 from datetime import datetime
 
 from loguru import logger
-from sqlalchemy import create_engine, func, text as sa_text
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import func, text as sa_text
+from sqlalchemy.orm import Session
 
 from app.platform.settings import get_settings
+from app.domains.financial.db import build_engine, init_tables, make_session_factory
 from app.domains.financial.dates import years_ago
-from app.domains.financial.industry_scope import normalize_template
 from app.domains.financial.display import UNIT_BY_TYPE, UNIT_UNKNOWN
+from app.domains.financial.formula import safe_eval_formula
+from app.domains.financial.industry_scope import normalize_template
 from app.domains.financial.models import (
-    Base,
     CompanyMaster, FinancialPeriod, FinancialMetric, FinancialCore,
     MetricDict, AnomalyRule, RawFinancialPayload, DataQualityLog,
 )
-
-# ---------- 口径常量（方案 §4.2 / §4.3）----------
-
-# 单位语义（UNIT_BY_TYPE / UNIT_UNKNOWN / 展示格式化）统一在 display.py
 
 # 取值来源
 SOURCE_EM = "eastmoney"                 # 东方财富三表（资产负债表/利润表/现金流量表）
@@ -61,7 +59,6 @@ _RAW_TABLE_COLUMNS = (
     "params", "payload_path", "checksum", "fetched_at",
 )
 
-
 def normalize_code(code: str | int | None) -> str:
     """股票代码归一化：去后缀/空白 → 6 位裸代码（库内唯一口径）
 
@@ -77,224 +74,18 @@ def normalize_code(code: str | int | None) -> str:
 
 # ---------- 派生公式求值（方案 §5.1 formula_engine 的数据层实现）----------
 
-_BIN_OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-}
-_UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
-_UNSAFE_NAMES = {"eval", "exec", "open", "compile", "__import__", "globals", "locals"}
-_SAFE_CALLS = {"abs": abs, "min": min, "max": max, "round": round}
-
-
-class _FormulaEvaluator(ast.NodeVisitor):
-    """只允许四则运算与白名单函数的公式求值（不用裸 eval）"""
-
-    def __init__(self, values: dict[str, float | None]):
-        self.values = values
-
-    def eval(self, expr: str):
-        tree = ast.parse(expr, mode="eval")
-        return self.visit(tree.body)
-
-    def visit_Constant(self, node: ast.Constant):  # type: ignore[override]
-        if isinstance(node.value, (int, float)):
-            return float(node.value)
-        raise ValueError(f"公式含非法常量: {node.value!r}")
-
-    def visit_Name(self, node: ast.Name):  # type: ignore[override]
-        if node.id in _UNSAFE_NAMES:
-            raise ValueError(f"公式含禁用名称: {node.id}")
-        value = self.values.get(node.id)
-        if value is None:
-            raise KeyError(node.id)
-        return float(value)
-
-    def visit_BinOp(self, node: ast.BinOp):  # type: ignore[override]
-        op = _BIN_OPS.get(type(node.op))
-        if op is None:
-            raise ValueError(f"公式含不支持运算符: {type(node.op).__name__}")
-        return op(self.visit(node.left), self.visit(node.right))
-
-    def visit_UnaryOp(self, node: ast.UnaryOp):  # type: ignore[override]
-        op = _UNARY_OPS.get(type(node.op))
-        if op is None:
-            raise ValueError(f"公式含不支持一元运算符: {type(node.op).__name__}")
-        return op(self.visit(node.operand))
-
-    def visit_Call(self, node: ast.Call):  # type: ignore[override]
-        if not isinstance(node.func, ast.Name) or node.func.id not in _SAFE_CALLS:
-            raise ValueError("公式只允许 abs/min/max/round")
-        return _SAFE_CALLS[node.func.id](*[self.visit(a) for a in node.args])
-
-    def generic_visit(self, node):  # type: ignore[override]
-        raise ValueError(f"公式含不支持语法: {type(node).__name__}")
-
-
-def safe_eval_formula(expr: str, values: dict[str, float | None]) -> float | None:
-    """按 metric_dict.formula 求值；依赖缺失/除零/非法语法 → None（不写占位值）"""
-    if not expr or not expr.strip():
-        return None
-    try:
-        val = _FormulaEvaluator(values).eval(expr)
-    except KeyError:
-        return None                                   # 依赖指标缺失
-    except ZeroDivisionError:
-        return None                                   # 分母为 0
-    except (ValueError, SyntaxError, TypeError, OverflowError) as e:
-        logger.warning(f"派生公式无法求值（已跳过）: {expr!r} → {e}")
-        return None
-    try:
-        f = float(val)
-    except (TypeError, ValueError):
-        return None
-    if f != f or f in (float("inf"), float("-inf")):   # NaN / inf
-        return None
-    return f
-
-
 class Database:
     """数据库管理器（单例）"""
 
     # 迁移：为既有库补列（SQLite 无法给已存在的表补约束，故只补列/索引）
-    _REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
-        "financial_periods": {"fetch_status": "VARCHAR(80) DEFAULT 'ok'"},
-        "financial_metrics": {"source": "VARCHAR(20) DEFAULT ''",
-                             "updated_at": "VARCHAR(30) DEFAULT ''"},
-        "financial_core": {
-            "net_profit_parent": "FLOAT",
-            "roe_weighted": "FLOAT",
-            "inventory_days": "FLOAT",
-            "receivable_days": "FLOAT",
-            "payable_days": "FLOAT",
-            # 2026-09-22 扩展批次（用户决定进核心宽表）
-            "total_operating_cost": "FLOAT",
-            "net_profit_deducted": "FLOAT",
-            "goodwill": "FLOAT",
-            "ocf_per_share": "FLOAT",
-            "roe_avg": "FLOAT",
-            "roic": "FLOAT",
-            "operating_margin": "FLOAT",
-            "effective_tax_rate": "FLOAT",
-            "ocf_to_revenue": "FLOAT",
-            "equity_multiplier": "FLOAT",
-            "debt_to_equity": "FLOAT",
-            "cash_ratio": "FLOAT",
-            "quick_ratio_conservative": "FLOAT",
-            "total_asset_turnover": "FLOAT",
-            "current_asset_turnover": "FLOAT",
-            "fixed_asset_turnover": "FLOAT",
-            "total_assets_yoy": "FLOAT",
-            "equity_yoy": "FLOAT",
-            # 2026-09-26 ③ formula 派生支撑科目（东财三表直给；列名==metric_code）
-            "total_current_assets": "FLOAT",
-            "total_current_liab": "FLOAT",
-            "total_parent_equity": "FLOAT",
-            "operating_profit": "FLOAT",
-            "income_tax": "FLOAT",
-            "total_profit": "FLOAT",
-            "finance_expense": "FLOAT",
-            "sale_expense": "FLOAT",
-            "manage_expense": "FLOAT",
-            "monetary_funds": "FLOAT",
-            "accounts_payable": "FLOAT",
-            "fixed_asset": "FLOAT",
-            "capex": "FLOAT",
-        },
-        "raw_financial_payload": {"company_code": "VARCHAR(20) DEFAULT ''"},
-    }
-    _REQUIRED_INDEXES: dict[str, str] = {
-        "ix_metrics_metric_code":
-            "CREATE INDEX IF NOT EXISTS ix_metrics_metric_code ON financial_metrics(metric_code)",
-        "ix_metrics_source":
-            "CREATE INDEX IF NOT EXISTS ix_metrics_source ON financial_metrics(source)",
-    }
 
     def __init__(self):
         self.settings = get_settings()
-        self.engine = create_engine(
-            self.settings.DATABASE_URL,
-            echo=False,
-            connect_args={"check_same_thread": False} if "sqlite" in self.settings.DATABASE_URL else {},
-        )
-        self._SessionLocal = sessionmaker(bind=self.engine, autoflush=False)
+        self.engine = build_engine(self.settings.DATABASE_URL)
+        self._SessionLocal = make_session_factory(self.engine)
         self._metric_meta_cache: dict[str, dict] | None = None
-        self._init_tables()
+        init_tables(self.engine)
 
-    def _init_tables(self):
-        """建表（幂等）+ 迁移既有库"""
-        Base.metadata.create_all(self.engine)
-        self._migrate()
-
-    def _migrate(self) -> dict:
-        """幂等迁移：补列 → 补索引 → 清理遗留空表"""
-        result: dict[str, list[str]] = {
-            "added_columns": [], "created_indexes": [],
-            "dropped_tables": [], "rebuilt_tables": [], "data_fixes": [],
-        }
-        with self.engine.begin() as conn:
-            for table, columns in self._REQUIRED_COLUMNS.items():
-                exists = conn.execute(sa_text(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name=:t"
-                ), {"t": table}).first()
-                if not exists:
-                    continue
-                have = {row[1] for row in conn.execute(sa_text(f"PRAGMA table_info({table})"))}
-                for col, ddl in columns.items():
-                    if col in have:
-                        continue
-                    conn.execute(sa_text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
-                    result["added_columns"].append(f"{table}.{col}")
-            for name, ddl in self._REQUIRED_INDEXES.items():
-                conn.execute(sa_text(ddl))
-                result["created_indexes"].append(name)
-            # 约束迁移：v1 建表时 raw_financial_payload.company_id 为 NOT NULL，
-            # 而落盘发生在公司建档之前 → 需要重建该表（SQLite 不能改已有列约束）
-            exists = conn.execute(sa_text(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='raw_financial_payload'"
-            )).first()
-            if exists:
-                info = {r[1]: r for r in
-                        conn.execute(sa_text("PRAGMA table_info(raw_financial_payload)"))}
-                company_id_col = info.get("company_id")
-                if company_id_col is not None and company_id_col[3] == 1:   # notnull=1
-                    keep = [c for c in _RAW_TABLE_COLUMNS if c in info]
-                    conn.execute(sa_text(
-                        "ALTER TABLE raw_financial_payload RENAME TO raw_financial_payload_old"))
-                    conn.execute(sa_text(_RAW_TABLE_DDL))
-                    cols = ", ".join(keep)
-                    conn.execute(sa_text(
-                        f"INSERT INTO raw_financial_payload ({cols}) "
-                        f"SELECT {cols} FROM raw_financial_payload_old"))
-                    conn.execute(sa_text("DROP TABLE raw_financial_payload_old"))
-                    result["rebuilt_tables"].append("raw_financial_payload")
-            # 2026-09-26 数据源切换东财三表后，原新浪专用口径修正逻辑（operate_cost→
-            # total_operating_cost / 删 derived gross_profit）已移除：东财 OPERATE_COST
-            # 是真营业成本，gross_profit 由公式派生为正确值，不应再被启动时删除。
-            for table in LEGACY_TABLES:
-                row = conn.execute(sa_text(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name=:t"
-                ), {"t": table}).first()
-                if not row:
-                    continue
-                n = conn.execute(sa_text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0
-                if n == 0:
-                    conn.execute(sa_text(f"DROP TABLE {table}"))
-                    result["dropped_tables"].append(table)
-                else:
-                    logger.warning(f"遗留表 {table} 非空（{n} 行），保留不删")
-        if (result["added_columns"] or result["dropped_tables"]
-                or result["rebuilt_tables"] or any(
-                    not x.endswith(": 0") for x in result["data_fixes"])):
-            logger.info(
-                f"数据库迁移：补列 {len(result['added_columns'])} / "
-                f"补索引 {len(result['created_indexes'])} / "
-                f"重建表 {result['rebuilt_tables']} / 清理遗留表 {result['dropped_tables']}"
-            )
-        return result
 
     def get_session(self) -> Session:
         """获取一个新的数据库会话"""
@@ -899,7 +690,6 @@ class Database:
 
 # 单例
 _db: Database | None = None
-
 
 def get_db() -> Database:
     """获取数据库单例"""

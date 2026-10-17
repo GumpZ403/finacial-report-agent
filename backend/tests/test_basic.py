@@ -61,7 +61,7 @@ class TestDataLayer:
                     FinancialCore, MetricDict])
 
     def test_datasource_import(self):
-        from app.domains.financial.ingest.akshare_em import get_adapter
+        from app.domains.financial.ingest.eastmoney import get_adapter
         assert get_adapter is not None
 
     def test_scope_import(self):
