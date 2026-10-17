@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.harness.flow import FlowEvent
 from app.harness.memory import get_session_store
+from app.harness.store import ConversationStore, get_conversation_store
 from app.interfaces.http.routes import agent as routes_agent
 from app.main import app
 
@@ -46,6 +47,17 @@ def _clean_sessions():
     for sid in ("t-stream", "t-chat", "t-a", "t-b"):
         store.drop(sid)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolated_conversation_db(tmp_path, monkeypatch):
+    """落盘测试用临时库，绝不碰真实 storage/conversations.db"""
+    from app.harness import store as store_mod
+
+    s = ConversationStore(tmp_path / "conversations.db")
+    s.ensure_schema()
+    monkeypatch.setattr(store_mod, "_store", s)
+    return s
 
 
 class TestBasics:
@@ -110,6 +122,61 @@ class TestSessionMemory:
         d = client.get("/api/agent/memory?session_id=t-a").json()
         assert d["session_id"] == "t-a"
         assert d["short_term_len"] == 2
+
+
+class TestPersistence:
+    """会话记忆已落盘：两个入口都写库，清空也清库
+
+    注：读路径当前仍走进程内 Memory（见 harness/store.py 顶部"阶段说明"），
+    所以这里只断言"写进去、能查出来"，不断言"重启后自动回到上下文"。
+    """
+
+    def test_stream_persists_turn(self, client, fake_graph):
+        client.post("/api/agent/chat/stream",
+                    json={"query": "落盘测试", "session_id": "t-stream"})
+        store = get_conversation_store()
+        rec = store.get_session("t-stream")
+        assert rec["turn_count"] == 2
+        assert rec["title"] == "落盘测试"
+        assert [m["content"] for m in store.load_context("t-stream")] == ["落盘测试", "假答案"]
+
+    def test_chat_persists_meta(self, client, fake_graph):
+        import json
+        import sqlite3
+
+        client.post("/api/agent/chat", json={"query": "看下 meta", "session_id": "t-chat"})
+        con = sqlite3.connect(get_conversation_store().db_path)
+        try:
+            raw = con.execute(
+                "SELECT meta_json FROM conversations"
+                " WHERE session_id='t-chat' AND turn_index=0"
+            ).fetchone()[0]
+        finally:
+            con.close()
+        assert json.loads(raw)["intent"] == "chat"
+
+    def test_clear_removes_disk_rows(self, client, fake_graph):
+        client.post("/api/agent/chat", json={"query": "清盘前", "session_id": "t-a"})
+        r = client.post("/api/agent/clear?session_id=t-a")
+        assert r.json()["deleted_messages"] == 2
+        assert get_conversation_store().get_session("t-a") is None
+
+    def test_memory_endpoint_reports_disk(self, client, fake_graph):
+        client.post("/api/agent/chat", json={"query": "看下记忆", "session_id": "t-a"})
+        disk = client.get("/api/agent/memory?session_id=t-a").json()["disk"]
+        assert disk["turn_count"] == 2
+        assert disk["title"] == "看下记忆"
+
+    def test_disk_failure_does_not_break_answer(self, client, fake_graph, monkeypatch):
+        """落盘失败必须被隔离：回答照常返回，进程内记忆照常写入"""
+        def boom(*args, **kwargs):
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(ConversationStore, "append_turn", boom)
+        r = client.post("/api/agent/chat", json={"query": "磁盘挂了", "session_id": "t-b"})
+        assert r.status_code == 200
+        assert r.json()["reply"] == "假答案"
+        assert len(get_session_store().get("t-b").short_term) == 2
 
 
 class TestStreaming:

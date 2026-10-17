@@ -46,6 +46,12 @@ async def lifespan(app: FastAPI):
     logger.info(f"Chroma: {settings.CHROMA_PERSIST_DIR}")
     logger.info(f"前端产物: {settings.frontend_dist_dir} (存在={settings.frontend_dist_dir.is_dir()})")
 
+    # 会话记忆库：首次获取即建表（sessions / conversations）。失败只记日志，不影响服务启动
+    from app.harness.store import get_conversation_store
+
+    store = get_conversation_store()
+    logger.info(f"会话记忆库: {store.db_path} · {store.stats()}")
+
     yield
 
     logger.info("系统关闭")

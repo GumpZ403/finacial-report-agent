@@ -11,6 +11,8 @@
   **逐节点真流式**：流程跑在后台线程里，事件经 Queue 送到生成器，不再等整个流程结束。
 - 此前只有非流式 /chat 写记忆，而前端只用流式 → 多轮对话实际不记上下文。两个入口都写。
 - 此前 session_id 字段存在但未使用，所有请求共享一个 Memory 单例；现在按会话隔离。
+- 会话记忆已落盘（storage/conversations.db，见 harness/store.py）。当前是**双写**：
+  读仍走进程内 Memory（重启后历史不会回上下文），写同时进库 → 下一步把读路径切到库里。
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from loguru import logger
 from app.domains.conversation.graph import get_agent_graph
 from app.harness.flow import FlowEvent
 from app.harness.memory import DEFAULT_SESSION_ID, get_session_store
+from app.harness.store import get_conversation_store
 from app.interfaces.http.schemas import AgentChatRequest
 
 router = APIRouter(prefix="/api/agent", tags=["Agent 对话"])
@@ -88,11 +91,32 @@ def _to_response(state: dict) -> dict:
     }
 
 
-def _remember(session_id: str, query: str, reply: str) -> None:
-    """把一问一答写入该会话的短期记忆（两个入口共用）"""
+def _meta_snapshot(state: dict) -> dict:
+    """从流程最终状态里摘出要落盘的决策信息（这是唯一需要"从流程内部取"的字段）"""
+    snap = {
+        "intent": state.get("intent"),
+        "task_type": state.get("task_type"),
+        "tool_name": state.get("tool_name"),
+        "confidence": state.get("confidence"),
+        "tool_status": [
+            r.get("tool_status") for r in (state.get("tool_results") or []) if isinstance(r, dict)
+        ],
+    }
+    return {k: v for k, v in snap.items() if v not in (None, "", [])}
+
+
+def _remember(session_id: str, query: str, reply: str, meta: dict | None = None) -> None:
+    """把一问一答写入该会话记忆：进程内窗口（读路径）+ 落盘（storage/conversations.db）
+
+    两个入口共用。落盘失败只记日志——绝不因为存库失败而丢掉回答。
+    """
     mem = get_session_store().get(session_id)
     mem.add("user", query)
     mem.add("assistant", reply[:_MAX_MEMORY_CHARS])
+    try:
+        get_conversation_store().append_turn(session_id, query, reply, meta=meta)
+    except Exception:
+        logger.warning("[memory] 会话写盘失败（已忽略，不影响回答）")
 
 
 def _stage_message(ev: FlowEvent) -> str | None:
@@ -122,7 +146,7 @@ def agent_chat(req: AgentChatRequest):
         return {"intent": "chat", "agent": "财报解读助手",
                 "reply": "处理失败：" + _friendly_error(e), "meta": {}}
     resp = _to_response(result)
-    _remember(req.session_id, query, resp["reply"])
+    _remember(req.session_id, query, resp["reply"], meta=_meta_snapshot(result))
     return resp
 
 
@@ -171,7 +195,7 @@ def agent_chat_stream(req: AgentChatRequest):
 
         resp = _to_response(final)
         # 流式入口同样写记忆（此前只有 /chat 写，前端只用流式 → 上下文丢失）
-        _remember(session_id, query, resp["reply"])
+        _remember(session_id, query, resp["reply"], meta=_meta_snapshot(final))
         yield _sse({"type": "result", **resp})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
@@ -179,12 +203,23 @@ def agent_chat_stream(req: AgentChatRequest):
 
 @router.get("/memory")
 def agent_memory(session_id: str = Query(DEFAULT_SESSION_ID, description="会话ID")):
-    """指定会话的记忆概览（长期记忆模块已删除，只暴露短期窗口）"""
+    """指定会话的记忆概览（短期窗口 + 落盘记录）"""
     mem = get_session_store().get(session_id)
+    record = get_conversation_store().get_session(session_id)
     return {
         "session_id": session_id,
         "short_term_len": len(mem.short_term),
         "summary": mem.get_summary(),
+        "disk": (
+            {
+                "title": record.get("title"),
+                "turn_count": record.get("turn_count"),
+                "summary_upto": record.get("summary_upto"),
+                "updated_at": record.get("updated_at"),
+            }
+            if record
+            else None
+        ),
         "recent": [
             {"role": m["role"], "content": m["content"][:80]}
             for m in list(mem.short_term)[-6:]
@@ -194,9 +229,18 @@ def agent_memory(session_id: str = Query(DEFAULT_SESSION_ID, description="会话
 
 @router.post("/clear")
 def agent_clear(session_id: str = Query(DEFAULT_SESSION_ID, description="会话ID")):
-    """清空指定会话的记忆"""
+    """清空指定会话的记忆（进程内窗口 + 落盘记录）"""
     get_session_store().drop(session_id)
-    return {"status": "success", "message": f"会话 {session_id} 的记忆已清空"}
+    try:
+        deleted = get_conversation_store().delete_session(session_id)
+    except Exception:
+        logger.warning("[memory] 会话清盘失败（已忽略）")
+        deleted = 0
+    return {
+        "status": "success",
+        "message": f"会话 {session_id} 的记忆已清空",
+        "deleted_messages": deleted,
+    }
 
 
 @router.get("/flow")

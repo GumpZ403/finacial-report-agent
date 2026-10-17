@@ -114,6 +114,16 @@ class Settings(BaseSettings):
     def frontend_dist_dir(self) -> Path:
         return _PROJECT_ROOT / "frontend" / "dist"
 
+    @property
+    def conversations_db_path(self) -> Path:
+        """会话记忆库（独立于财报数据）
+
+        为什么不和 financial.db 合库：财报数据是权威数据，要备份/迁移/可重建；
+        对话历史是一次性运行状态，丢了不心疼。两者写频率差异也大（每轮几行 vs 批量导入），
+        SQLite 写是串行的，分库可避免互相等锁。
+        """
+        return self.storage_dir / "conversations.db"
+
 
 # 单例
 _settings: Settings | None = None

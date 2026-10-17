@@ -77,7 +77,7 @@ D:\A_projects\finacial-report-agent\
 │   └── pyproject.toml              # pytest 配置
 ├── frontend\                       # Vue3 + Vite（唯一前端，dist/ 由 FastAPI 托管）
 ├── docs\                           # 方案文档（改造依据）
-├── storage\                        # financial.db / raw（原始json）/ chroma_db
+├── storage\                        # financial.db（财报）/ conversations.db（会话记忆）/ raw / chroma_db
 ├── models\                         # 本地模型缓存（bge embedding / reranker）
 ├── reports\                        # 报告输出目录
 ├── logs\                           # 日志
@@ -95,7 +95,7 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 
 ## 4. 数据架构
 
-### 4.1 SQLite（storage/financial.db，SQLAlchemy 2.0，12 张表）
+### 4.1 SQLite（storage/financial.db，SQLAlchemy 2.0，9 张表）
 - **业务表（9 张）**：
   - `company_master`：公司主表（code 唯一、行业、模板）
   - `financial_periods`：报告期（(company_id, period, report_scope) 唯一）
@@ -105,8 +105,17 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
   - `peer_groups` / `anomaly_rules`：同行组 / 异常规则（离线预计算，当前空表待用）
   - `raw_financial_payload`：原始接口响应登记（指向 storage/raw/*.json）
   - `data_quality_log`：L0 质量日志
-- **通用/配置表（3 张）**：`reports`（报告记录）、`feedbacks`（反馈）、`long_term_memories`（长期记忆）
+- ~~通用/配置表（3 张）：`reports` / `feedbacks` / `long_term_memories`~~ → 舆情项目遗留，**已随代码删除**，库里不存在
 - 舆情域模型已全部删除。
+
+### 4.1.1 会话记忆库（storage/conversations.db，stdlib sqlite3，2 张表）
+- `sessions`：会话元信息（`title` 首问截断 / `turn_count` 服务端自增 / `summary` + `summary_upto` 摘要游标）
+- `conversations`：逐轮消息（`turn_index` 单调递增，`UNIQUE(session_id, turn_index)` 做幂等护栏；`role` 有 CHECK）
+- **分库理由**：财报数据是权威数据（要备份/可迁移/可重建），对话是一次性运行状态；
+  且写频率差异大（每轮几行 vs 批量导入），SQLite 写串行，混库会互相等锁
+- 代码：`app/harness/store.py`（`ConversationStore`，`PRAGMA user_version` 记 schema 版本）
+- **现状：写已落地、读仍未切换**。每次问答都会写库，但 `get_context()` 还走进程内 `Memory`，
+  所以重启后历史不会自动回到上下文；下一步把读路径切到 `load_context()` + `get_session().summary`
 
 ### 4.2 数据源与流水线（东财单源，2026-09-26 定稿）
 - **接口（4 个，akshare 东财）**：
