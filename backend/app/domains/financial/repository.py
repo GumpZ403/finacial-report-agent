@@ -168,6 +168,7 @@ class Database:
 
     # 迁移：为既有库补列（SQLite 无法给已存在的表补约束，故只补列/索引）
     _REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
+        "financial_periods": {"fetch_status": "VARCHAR(80) DEFAULT 'ok'"},
         "financial_metrics": {"source": "VARCHAR(20) DEFAULT ''"},
         "financial_core": {
             "net_profit_parent": "FLOAT",
@@ -708,6 +709,14 @@ class Database:
         code = normalize_code(company_code)
         with self.get_session() as session:
             comp = session.query(CompanyMaster).filter_by(code=code).first()
+            if checksum:
+                # 同一份内容只登记一次：快照文件按 checksum 命名且只增不改，
+                # 若重复登记，N 条记录会指向同一份内容，反而丢掉"哪些版本被拉过"的信息
+                existing = session.query(RawFinancialPayload).filter_by(
+                    company_code=code, checksum=checksum
+                ).first()
+                if existing is not None:
+                    return existing.payload_id
             row = RawFinancialPayload(
                 company_id=comp.company_id if comp else None,
                 company_code=code,

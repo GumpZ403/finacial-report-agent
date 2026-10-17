@@ -98,12 +98,15 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 ### 4.1 SQLite（storage/financial.db，SQLAlchemy 2.0，9 张表）
 - **业务表（9 张）**：
   - `company_master`：公司主表（code 唯一、行业、模板）
-  - `financial_periods`：报告期（(company_id, period, report_scope) 唯一）
+  - `financial_periods`：报告期（(company_id, period, report_scope) 唯一）；
+    `fetch_status` 记采集完整性（`ok` / `partial:cashflow` 等）——三表部分失败时该期数据不全，
+    与"公司本来没这项"必须区分，报告侧据此显式标注缺失
   - `financial_metrics`：指标长表（EAV，唯一真相，(period_id, metric_code) 复合主键）
   - `financial_core`：宽表（一行一期次，供 SQL/对比/排行，镜像 financial_metrics）
   - `metric_dict`：指标字典（75 条，含 name_cn/unit_type/formula，语义来源）
   - `peer_groups` / `anomaly_rules`：同行组 / 异常规则（离线预计算，当前空表待用）
-  - `raw_financial_payload`：原始接口响应登记（指向 storage/raw/*.json）
+  - `raw_financial_payload`：原始接口响应登记，指向 `storage/raw/<code>/<时间戳>-<checksum8>.json`；
+    按 (company_code, checksum) 去重，文件内容变了才产生新快照（历史版本不被覆盖）
   - `data_quality_log`：L0 质量日志
 - ~~通用/配置表（3 张）：`reports` / `feedbacks` / `long_term_memories`~~ → 舆情项目遗留，**已随代码删除**，库里不存在
 - 舆情域模型已全部删除。
@@ -118,17 +121,24 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
   所以重启后历史不会自动回到上下文；下一步把读路径切到 `load_context()` + `get_session().summary`
 
 ### 4.2 数据源与流水线（东财单源，2026-09-26 定稿）
-- **接口（4 个，akshare 东财）**：
+- **接口（akshare 东财，以代码实际调用为准）**：
+  - `stock_info_a_code_name`：A 股代码/名称列表（`list_companies`）
   - `stock_balance_sheet_by_report_em`：资产负债表（货币资金/存货/应付…）
   - `stock_profit_sheet_by_report_em`：利润表（营收/成本/费用明细…）
   - `stock_cash_flow_sheet_by_report_em`：现金流量表（经营/投资/筹资…）
-  - `stock_individual_info_em`：公司行业（M2 建档自动化用，当前 20 家行业为手工种子）
+  - `stock_individual_info_em`：公司行业 —— **尚未接入**（`industry_l1/l2/template` 现由 `scripts/fetch_slice.py`
+    的 `SLICE` 常量手填，不是拉取得到的）
 - **归一化**：三张映射表 `EM_BALANCE_MAP / EM_PROFIT_MAP / EM_CASHFLOW_MAP`（接口英文列 → metric_code
   中间语言，如 TOTAL_OPERATE_INCOME → revenue）；金额统一 CNY 元、比率统一小数；
   东财三表均为**累计口径**（is_single_quarter=0）
 - **不再做**：新浪双源（已退役）、双源交叉验证（单次/累计口径对不上）、L0 回算死检查
-- **当前切片**：20 家公司（7 行业）/ **833 报告期 / 45,964 指标** / 指标字典 75 条 /
-  原始落盘 `storage/raw/*.json`（69 份登记）
+- **期次窗口**：统一**近 10 年**（`akshare_em.PERIOD_WINDOW_YEARS = 10`，与
+  `repository.prune_out_of_window(years=10)` 必须同步改）；raw 快照保存全历史，只有入库按窗口裁剪
+- **采集完整性**：`FetchResult.status` 逐表记 ok/failed，任一表失败 → `partial`，
+  写 `financial_periods.fetch_status`；缺失的表**不会**被当成"空科目"入库，`fetch_slice.py`
+  把 partial 计入失败清单并以非 0 退出码结束
+- **历史切片记录（当前库已清空）**：20 家公司（7 行业）/ 833 报告期 / 45,964 指标 / 指标字典 75 条 ——
+  重新灌数请跑 `scripts/fetch_slice.py`（需先装 akshare）
 - **流水线**：采集（akshare）→ 原始落盘（storage/raw/）→ 归一化+映射 → 入库（SQLite）
   → L0 校验 → 文本化 → 向量化（ChromaDB）
 

@@ -63,7 +63,7 @@ cd backend
 → 返回 {intent, agent, reply, meta}
 ```
 
-## 数据层常用命令（backend/app/data）
+## 数据层常用命令（backend/app/domains/financial）
 
 以下命令均以 `backend/` 为工作目录：
 

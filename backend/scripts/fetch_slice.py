@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger
 
-from app.domains.financial.ingest.akshare_em import get_adapter
+from app.domains.financial.ingest.akshare_em import PERIOD_WINDOW_YEARS, get_adapter
 from app.domains.financial.repository import get_db
 
 # (code, name, industry_l1, industry_l2, industry_template)
@@ -50,35 +50,49 @@ SLICE = [
 ]
 
 
-def main(limit: int = 20):
+def _exchange_of(code: str) -> str:
+    """6=上交所 / 0,3=深交所 / 4,8=北交所（此前 4、8 开头被误标成 SZSE）"""
+    if code.startswith("6"):
+        return "SSE"
+    if code.startswith(("0", "3")):
+        return "SZSE"
+    return "BSE"
+
+
+def main(limit: int = 20) -> dict:
     db = get_db()
     adapter = get_adapter()
     slice_list = SLICE[:limit]
-    logger.info(f"M1 切片开始: {len(slice_list)} 家公司")
+    logger.info(f"M1 切片开始: {len(slice_list)} 家公司（期次窗口近 {PERIOD_WINDOW_YEARS} 年）")
 
     total_reports = total_metrics = 0
-    company_rows = 0
+    ok_companies = 0
+    failures: list[dict] = []
     t0 = time.time()
 
     for code, name, l1, l2, tpl in slice_list:
         try:
-            reports = adapter.fetch_indicators(code)
-            if not reports:
-                logger.warning(f"[{code}] 无数据，跳过")
+            result = adapter.fetch_indicators(code)
+            if not result.reports:
+                failures.append({"code": code, "name": name, "reason": "三表均未取到数据"})
+                logger.error(f"[{code}] {name}: 三表均未取到数据，跳过")
                 continue
-            adapter.save_raw(code, reports)
+            # 先建档再落盘：raw_financial_payload 需要 company_id。
+            # 此前顺序相反 → 首次拉取时公司尚不存在，company_id 恒为 NULL 且永不回填。
             company_id = db.upsert_company(
                 code, name, industry_l1=l1, industry_l2=l2, industry_template=tpl,
-                exchange="SSE" if code.startswith("6") else "SZSE",
+                exchange=_exchange_of(code),
             )
-            company_rows += 1
+            adapter.save_raw(code, result.reports)
             n_rep = n_met = 0
-            for r in reports:
+            for r in result.reports:
                 rid = db.upsert_financial_period(
                     company_id, r["period"], period_type=r["period_type"],
                     is_single_quarter=r["is_single_quarter"],
                     period_end=r["period_end"], source="akshare",
-                    fetched_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                    fetched_at=result.fetched_at,
+                    # 采集完整性：partial 时该期数据不全，报告必须显式标注而非当作空值
+                    fetch_status=result.fetch_status,
                 )
                 # 单位由 metric_dict 推导（不再传 unit）；来源随指标写入，供溯源/质检
                 n = db.upsert_metrics(rid, r["metrics"], sources=r.get("sources") or {})
@@ -87,15 +101,33 @@ def main(limit: int = 20):
                 n_rep += 1
             total_reports += n_rep
             total_metrics += n_met
-            logger.info(f"[{code}] {name}: {n_rep} 期 / {n_met} 指标")
+            if result.partial:
+                failures.append({
+                    "code": code, "name": name,
+                    "reason": f"采集不完整 {result.fetch_status}（已写入 {n_rep} 期）",
+                })
+                logger.error(
+                    f"[{code}] {name}: 采集不完整 {result.fetch_status}，"
+                    f"已写入 {n_rep} 期但数据不全"
+                )
+            else:
+                ok_companies += 1
+                logger.info(f"[{code}] {name}: {n_rep} 期 / {n_met} 指标")
         except Exception as e:
+            failures.append({
+                "code": code, "name": name,
+                "reason": f"{type(e).__name__}: {str(e)[:120]}",
+            })
             logger.error(f"[{code}] {name} 拉取失败: {type(e).__name__}: {str(e)[:200]}")
             continue
 
     logger.info(
-        f"M1 切片完成: 公司 {company_rows} / 报告期 {total_reports} / 指标 {total_metrics} / "
-        f"耗时 {time.time()-t0:.0f}s"
+        f"M1 切片完成: 成功 {ok_companies} / 失败 {len(failures)} / "
+        f"报告期 {total_reports} / 指标 {total_metrics} / 耗时 {time.time()-t0:.0f}s"
     )
+    if failures:
+        logger.error("失败清单: " + "; ".join(
+            f"{f['code']} {f['name']}（{f['reason']}）" for f in failures))
 
     # L0 走数据层唯一实现（全库校验，不再对单个报告期抽样）
     from app.domains.financial.quality import run_l0
@@ -105,10 +137,13 @@ def main(limit: int = 20):
         f"单位 {l0['unit_pass_rate']}% / 长表-宽表 {l0['core_mirror_pass_rate']}% / "
         f"核心指标覆盖 {l0['coverage_rate']}%"
     )
+    return {"ok": ok_companies, "failed": failures,
+            "reports": total_reports, "metrics": total_metrics, "l0": l0}
 
 
 if __name__ == "__main__":
     lim = 20
     if len(sys.argv) > 1 and sys.argv[1] == "--limit":
         lim = int(sys.argv[2])
-    main(lim)
+    summary = main(lim)
+    raise SystemExit(0 if not summary["failed"] else 1)

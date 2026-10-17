@@ -54,6 +54,7 @@ class FinancialPeriod(Base):
     source_version = Column(String(50), default="")                     # 数据源版本
     raw_payload_id = Column(Integer, nullable=True)                     # 关联原始落盘 payload（回放溯源）
     fetched_at = Column(String(30), default="")                         # 拉取时间
+    fetch_status = Column(String(80), default="ok")                     # 采集完整性: ok / partial:<失败表>；partial 时该期数据不全，不得当作完整数据
 
     __table_args__ = (
         UniqueConstraint("company_id", "period", "report_scope", name="uq_report_period"),  # 同公司同期次同口径唯一

@@ -8,13 +8,48 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from dataclasses import dataclass
+
 from loguru import logger
 
 from app.domains.financial.repository import get_db, normalize_code, SOURCE_EM
+from app.platform.settings import get_settings
 
 # 统一期次窗口：只保留最近 N 年（东财三表返回全历史，由 build_reports() 本地裁剪）
+# 注：repository.prune_out_of_window() 的默认值必须与此一致（同一决策的两处落点）
 PERIOD_WINDOW_YEARS = 10
-DEFAULT_START_YEAR = str(datetime.now().year - PERIOD_WINDOW_YEARS)
+
+# 三表的固定 key：status 字典与 fetch_status 字符串都用它，顺序稳定便于比对
+STATEMENT_KEYS = ("balance", "profit", "cashflow")
+
+
+@dataclass
+class FetchResult:
+    """一次采集的结果：报告期 + 逐表成功状态
+
+    为什么要这个类型：三表是三个独立请求。任一失败时若只写"能拿到的部分"，
+    库里就会出现"某期缺 30 个科目"，且与"公司本来没有这些科目"无法区分——
+    报告会因此把"网络失败"当成"公司没有这项资产"。
+    partial=True 时调用方必须显式标注（financial_periods.fetch_status）。
+    """
+
+    code: str
+    reports: list[dict]
+    status: dict[str, str]
+    fetched_at: str
+
+    @property
+    def failed(self) -> list[str]:
+        return [k for k in STATEMENT_KEYS if self.status.get(k) != "ok"]
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.failed)
+
+    @property
+    def fetch_status(self) -> str:
+        """落库值：ok / partial:balance / partial:balance,cashflow"""
+        return "ok" if not self.partial else "partial:" + ",".join(self.failed)
 
 
 @runtime_checkable
@@ -25,8 +60,8 @@ class DataSourceAdapter(Protocol):
         """返回 [{code, name}]，code 为统一 6 位代码（不含后缀）"""
         ...
 
-    def fetch_indicators(self, code: str) -> list[dict]:
-        """返回按报告期的指标列表：
+    def fetch_indicators(self, code: str) -> "FetchResult":
+        """返回按报告期的指标列表（含逐表采集状态，见 FetchResult）：
 
         [{
             "period": "2024Q3", "period_end": "2024-09-30",
@@ -156,6 +191,14 @@ def _normalize_end(value) -> str | None:
     return None
 
 
+def _compact_ts(ts: str) -> str:
+    """'2026-10-17 16:44:30' → '20261017-164430'（文件名用，字典序即时间序）"""
+    digits = "".join(ch for ch in str(ts or "") if ch.isdigit())
+    if len(digits) >= 14:
+        return f"{digits[:8]}-{digits[8:14]}"
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
 def _is_na(v) -> bool:
     if v is None:
         return True
@@ -206,7 +249,9 @@ class AkshareEMAdapter:
 
     def __init__(self, delay: float = 0.4, raw_dir: Path | None = None):
         self.delay = delay                     # 请求间隔（秒），限频保护
-        default_raw = Path(__file__).resolve().parent.parent.parent / "storage" / "raw"
+        # 走 settings：此前用 __file__ 相对层级推算，重构后漂移到
+        # backend/app/domains/storage/raw（仓库根的 storage/raw 永远收不到数据）
+        default_raw = get_settings().storage_dir / "raw"
         self.raw_dir = Path(raw_dir) if raw_dir else default_raw
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self._last_raw: dict | None = None     # 最近一次 fetch 的原始响应（供 save_raw）
@@ -219,49 +264,57 @@ class AkshareEMAdapter:
         return [{"code": normalize_code(r["code"]), "name": str(r["name"]).strip()}
                 for _, r in df.iterrows()]
 
-    def fetch_indicators(self, code: str, start_year: str | None = None) -> list[dict]:
-        """东财三表拉取 → 归一化 → 报告期列表（并缓存原始响应）
+    def fetch_indicators(self, code: str) -> FetchResult:
+        """东财三表拉取 → 归一化 → FetchResult（并缓存原始响应）
 
-        start_year 参数保留仅为兼容旧调用方（东财接口不支持，忽略）。
+        逐表记录成功/失败：任一表失败即 partial，由调用方写入 fetch_status。
+        东财接口不支持按年份过滤（原 start_year 参数是死参数，已删），
+        窗口裁剪仍由 build_reports() 本地完成。
         """
         import akshare as ak
         code = normalize_code(code)
         symbol = _em_symbol(code)
+        fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        balance = profit = cashflow = None
-        for name, fn in [
-            ("资产负债表", ak.stock_balance_sheet_by_report_em),
-            ("利润表", ak.stock_profit_sheet_by_report_em),
-            ("现金流量表", ak.stock_cash_flow_sheet_by_report_em),
+        frames: dict[str, object] = {}
+        status: dict[str, str] = {k: "failed" for k in STATEMENT_KEYS}
+        for name, key, fn in [
+            ("资产负债表", "balance", ak.stock_balance_sheet_by_report_em),
+            ("利润表", "profit", ak.stock_profit_sheet_by_report_em),
+            ("现金流量表", "cashflow", ak.stock_cash_flow_sheet_by_report_em),
         ]:
             time.sleep(self.delay)
             try:
                 df = fn(symbol=symbol)
-                if name == "资产负债表":
-                    balance = df
-                elif name == "利润表":
-                    profit = df
-                else:
-                    cashflow = df
+                if df is None or len(df) == 0:
+                    logger.warning(f"[{code}] {name} 返回空表（按失败处理）")
+                    continue
+                frames[key] = df
+                status[key] = "ok"
                 logger.info(f"[{code}] {name} 拉取成功: {df.shape}")
             except Exception as e:
                 logger.warning(f"[{code}] {name} 拉取失败: {type(e).__name__}: {str(e)[:160]}")
 
-        # 原始响应（v3）：写入前不做任何变换，可离线回放
+        # 原始响应（v3）：写入前不做任何变换，可离线回放。
+        # fetch_status 一并落盘 → 回放时能复现"这份快照本来就不全"
         self._last_raw = {
             "version": 3,
             "code": code,
-            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "params": {"symbol": symbol},
-            "em_balance": _frame_payload(balance),
-            "em_profit": _frame_payload(profit),
-            "em_cashflow": _frame_payload(cashflow),
+            "fetched_at": fetched_at,
+            "params": {"symbol": symbol, "fetch_status": dict(status)},
+            "em_balance": _frame_payload(frames.get("balance")),
+            "em_profit": _frame_payload(frames.get("profit")),
+            "em_cashflow": _frame_payload(frames.get("cashflow")),
         }
 
-        reports, conflicts = self.build_reports(balance, profit, cashflow)
+        reports, conflicts = self.build_reports(
+            frames.get("balance"), frames.get("profit"), frames.get("cashflow"))
         if conflicts:
             logger.warning(f"[{code}] 发现 {len(conflicts)} 处偏差（单源方案不应出现，请检查映射表）")
-        return reports
+        result = FetchResult(code=code, reports=reports, status=status, fetched_at=fetched_at)
+        if result.partial:
+            logger.error(f"[{code}] 采集不完整（{result.fetch_status}）：缺失的表不会写入空科目")
+        return result
 
     # ---- 归一化 ----
 
@@ -338,7 +391,12 @@ class AkshareEMAdapter:
     # ---- 原始落盘（v3：原始响应，可回放）----
 
     def save_raw(self, code: str, payload: list[dict] | None = None) -> Path:
-        """原始响应落盘 storage/raw/<code>.json（只增不改）+ 登记 raw_financial_payload
+        """原始响应落盘 storage/raw/<code>/<时间戳>-<checksum8>.json（只增不改）
+
+        此前写的是固定路径 raw/<code>.json，每次拉取**覆盖**——财报重述后
+        "上个月看到的营收"永久丢失，与"只增不改"的承诺相反。
+        现在文件名带内容 checksum：同一份内容重复拉取复用已有快照（不产生新文件），
+        内容变了必然是新文件 → 历史版本天然保留。
 
         payload 保留用于兼容既有调用方；若本次 fetch 已缓存原始响应，则优先落盘**原始响应**（v3）。
         """
@@ -354,8 +412,12 @@ class AkshareEMAdapter:
             }
         text = json.dumps(raw, ensure_ascii=False, indent=1)
         checksum = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        path = self.raw_dir / f"{code}.json"
-        path.write_text(text, encoding="utf-8")
+        path, need_write = self._snapshot_path(code, checksum, raw.get("fetched_at", ""))
+        if need_write:
+            path.write_text(text, encoding="utf-8")
+            logger.info(f"[{code}] raw 落盘: {path.parent.name}/{path.name}（{len(text)} B）")
+        else:
+            logger.info(f"[{code}] raw 内容与既有快照一致，复用: {path.name}")
         try:
             get_db().record_raw_payload(
                 code, str(path), checksum=checksum,
@@ -368,9 +430,25 @@ class AkshareEMAdapter:
             logger.warning(f"[{code}] 原始响应登记失败（文件已落盘）: {e}")
         return path
 
+    def _snapshot_path(self, code: str, checksum: str,
+                       fetched_at: str) -> tuple[Path, bool]:
+        """快照路径；已有同 checksum 的快照则复用（返回 False 表示无需写盘）"""
+        d = self.raw_dir / code
+        d.mkdir(parents=True, exist_ok=True)
+        existed = sorted(d.glob(f"*-{checksum[:8]}.json"))
+        if existed:
+            return existed[-1], False
+        return d / f"{_compact_ts(fetched_at)}-{checksum[:8]}.json", True
+
     def load_raw(self, code: str) -> dict:
-        """读取落盘原始响应（v1 历史文件自动降级为 {'version': 1, 'reports': [...]})"""
-        path = self.raw_dir / f"{normalize_code(code)}.json"
+        """读取落盘原始响应：取最新快照，兼容 v1 时代的 raw/<code>.json"""
+        code = normalize_code(code)
+        snapshot_dir = self.raw_dir / code
+        if snapshot_dir.is_dir():
+            files = sorted(snapshot_dir.glob("*.json"))
+            if files:
+                return json.loads(files[-1].read_text(encoding="utf-8"))
+        path = self.raw_dir / f"{code}.json"
         if not path.exists():
             return {}
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -400,12 +478,18 @@ class AkshareEMAdapter:
         if not comp:
             raise ValueError(f"公司未建档: {code}（回放不负责建档，避免猜名称）")
         fetched_at = raw.get("fetched_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 快照自带采集完整性：缺表的快照回放后仍然是 partial（不臆造数据）
+        raw_status = (raw.get("params") or {}).get("fetch_status") or {}
+        failed = [k for k in STATEMENT_KEYS if raw_status.get(k) != "ok"] if raw_status else []
+        fetch_status = "ok" if not failed else "partial:" + ",".join(failed)
+        if fetch_status != "ok":
+            logger.warning(f"[{code}] 回放的是不完整快照：{fetch_status}")
         n_rep = n_met = 0
         for r in reports:
             rid = db.upsert_financial_period(
                 comp["company_id"], r["period"], period_type=r["period_type"],
                 is_single_quarter=r["is_single_quarter"], period_end=r["period_end"],
-                source="akshare", fetched_at=fetched_at,
+                source="akshare", fetched_at=fetched_at, fetch_status=fetch_status,
             )
             n_met += db.upsert_metrics(rid, r["metrics"], sources=r.get("sources") or {})
             db.derive_financial_core(rid)
