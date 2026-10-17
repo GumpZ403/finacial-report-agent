@@ -170,7 +170,8 @@ class Database:
     # 迁移：为既有库补列（SQLite 无法给已存在的表补约束，故只补列/索引）
     _REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "financial_periods": {"fetch_status": "VARCHAR(80) DEFAULT 'ok'"},
-        "financial_metrics": {"source": "VARCHAR(20) DEFAULT ''"},
+        "financial_metrics": {"source": "VARCHAR(20) DEFAULT ''",
+                             "updated_at": "VARCHAR(30) DEFAULT ''"},
         "financial_core": {
             "net_profit_parent": "FLOAT",
             "roe_weighted": "FLOAT",
@@ -407,7 +408,14 @@ class Database:
     def upsert_metrics(self, period_id: int, metrics: dict[str, float],
                        unit: str | None = None, is_estimated: int = 0,
                        sources: dict[str, str] | str | None = None) -> int:
-        """批量写入指标长表（幂等 upsert），返回写入条数
+        """批量写入指标长表（幂等 upsert），返回处理的指标条数
+
+        两个改进（P2）：
+        - **一次 SELECT 取回本期已有行**：原来是每个指标一次 `query().first()`，
+          一期 150 个指标就是 150 次查询（N+1）
+        - **变更检测**：value/unit/is_estimated/source 四项都没变就不写，
+          `updated_at` 只在值真的变了才推进 —— 能回答"这个数字什么时候变的"，
+          也避免每天全量重拉把几万行原样重写一遍
 
         Args:
             unit: **已废弃**。单位一律由 metric_dict.unit_type 推导（方案 §4.2），
@@ -425,23 +433,47 @@ class Database:
         meta = self._metric_meta()
         src_map: dict[str, str] = sources if isinstance(sources, dict) else {}
         src_default = sources if isinstance(sources, str) else ""
-        n = 0
+        codes = [c for c, v in metrics.items() if v is not None]
+        if not codes:
+            return 0
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        n = changed = 0
         with self.get_session() as session:
-            for code, value in metrics.items():
-                if value is None:
-                    continue
-                row = session.query(FinancialMetric).filter_by(
-                    period_id=period_id, metric_code=code
-                ).first()
+            existing = {
+                m.metric_code: m
+                for m in session.query(FinancialMetric).filter(
+                    FinancialMetric.period_id == period_id,
+                    FinancialMetric.metric_code.in_(codes),
+                ).all()
+            }
+            for code in codes:
+                value = float(metrics[code])
+                new_unit = self._unit_for(code, meta)
+                row = existing.get(code)
                 if row is None:
-                    row = FinancialMetric(period_id=period_id, metric_code=code)
-                    session.add(row)
-                row.value = float(value)
-                row.unit = self._unit_for(code, meta)
-                row.is_estimated = int(is_estimated)
-                row.source = src_map.get(code) or src_default or (row.source or "")
+                    session.add(FinancialMetric(
+                        period_id=period_id, metric_code=code, value=value,
+                        unit=new_unit, is_estimated=int(is_estimated),
+                        source=src_map.get(code) or src_default, updated_at=now,
+                    ))
+                    changed += 1
+                else:
+                    new_src = src_map.get(code) or src_default or (row.source or "")
+                    if (row.value != value or row.unit != new_unit
+                            or int(row.is_estimated or 0) != int(is_estimated)
+                            or (row.source or "") != new_src):
+                        row.value, row.unit = value, new_unit
+                        row.is_estimated = int(is_estimated)
+                        row.source = new_src
+                        row.updated_at = now        # 只有真变了才推进
+                        changed += 1
+                    # 未变更 → 不写、不动 updated_at
                 n += 1
             session.commit()
+        if changed:
+            logger.info(f"指标写入 period_id={period_id}: {n} 条（变更 {changed} 条）")
+        else:
+            logger.debug(f"指标写入 period_id={period_id}: {n} 条（无变更，全部跳过）")
         return n
 
     def get_metrics(self, period_id: int) -> dict[str, dict]:

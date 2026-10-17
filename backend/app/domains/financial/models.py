@@ -72,6 +72,7 @@ class FinancialMetric(Base):
     unit = Column(String(12), default="")                               # 单位语义: CNY/ratio/times/days/per_share/count
     is_estimated = Column(Integer, default=0)                           # 1=公式派生/回算未通过（非源数据）
     source = Column(String(20), default="")                             # 取值来源: eastmoney/sina/derived/manual
+    updated_at = Column(String(30), default="")                         # 该值最后一次**实际变化**的时间（未变不推进）
 
     __table_args__ = (
         Index("ix_metrics_metric_code", "metric_code"),                 # 按指标查全部公司加速

@@ -7,6 +7,7 @@
 - raw_dir 走 settings（不再漂移到 backend/app/domains/storage/raw）
 - build_reports：窗口裁剪、_YOY 换算、别名首值优先
 """
+import json
 import sys
 import types
 from datetime import timedelta
@@ -126,7 +127,7 @@ class TestRawSnapshot:
         path = adapter.save_raw("600519")
         assert path.parent.name == "600519"
         assert path.name.startswith("20261017-164430-")
-        assert path.suffix == ".json" and path.exists()
+        assert path.name.endswith(".json.gz") and path.exists()
         # 不再写到 raw/<code>.json 这种固定路径
         assert not (adapter.raw_dir / "600519.json").exists()
 
@@ -135,7 +136,7 @@ class TestRawSnapshot:
         p1 = adapter.save_raw("600519")
         p2 = adapter.save_raw("600519")
         assert p1 == p2
-        assert len(list((adapter.raw_dir / "600519").glob("*.json"))) == 1
+        assert len(list((adapter.raw_dir / "600519").glob("*.json*"))) == 1
         # 重复内容也只登记一次（去重交给 repository，这里只调一次/相同 checksum）
         checksums = {c["checksum"] for c in adapter.fake_db.calls}
         assert len(checksums) == 1
@@ -146,7 +147,7 @@ class TestRawSnapshot:
         self._adapter_with_raw(adapter, status={"balance": "ok", "profit": "failed", "cashflow": "ok"})
         p2 = adapter.save_raw("600519")
         assert p2 != p1 and p2.exists() and p1.exists()
-        assert len(list((adapter.raw_dir / "600519").glob("*.json"))) == 2
+        assert len(list((adapter.raw_dir / "600519").glob("*.json*"))) == 2
 
     def test_load_raw_returns_latest_snapshot(self, adapter):
         self._adapter_with_raw(adapter)
@@ -155,6 +156,33 @@ class TestRawSnapshot:
         adapter.save_raw("600519")
         raw = adapter.load_raw("600519")
         assert raw["params"]["fetch_status"]["profit"] == "failed"
+
+    def test_snapshot_is_gzip(self, adapter):
+        """快照落盘即压缩：gzip 魔数 + 体积明显小于未压缩 JSON"""
+        self._adapter_with_raw(adapter)
+        path = adapter.save_raw("600519")
+        raw_bytes = path.read_bytes()
+        assert raw_bytes[:2] == bytes([0x1F, 0x8B])          # gzip magic
+        import gzip as _gzip
+        assert json.loads(_gzip.decompress(raw_bytes))["code"] == "600519"
+
+    def test_snapshot_shrinks_vs_plain_json(self, adapter):
+        """压缩比说明为什么要 gzip（真实快照 2~3MB → 十分之一）"""
+        big_rows = [{"REPORT_DATE": "2024-12-31", f"COL{i}": float(i)} for i in range(200)]
+        adapter._last_raw = {**RAW_V3, "em_balance": {"columns": [], "rows": big_rows}}
+        path = adapter.save_raw("600519")
+        import json as _json
+        import gzip as _gzip
+        plain = len(_json.dumps(adapter._last_raw, ensure_ascii=False, indent=1).encode("utf-8"))
+        assert path.stat().st_size < plain / 3
+        assert _gzip.decompress(path.read_bytes())
+
+    def test_load_raw_roundtrip_gz(self, adapter):
+        self._adapter_with_raw(adapter)
+        adapter.save_raw("600519")
+        raw = adapter.load_raw("600519")
+        assert raw["version"] == 3
+        assert raw["params"]["fetch_status"]["cashflow"] == "ok"
 
     def test_load_raw_legacy_single_file(self, adapter):
         adapter.raw_dir.mkdir(parents=True, exist_ok=True)

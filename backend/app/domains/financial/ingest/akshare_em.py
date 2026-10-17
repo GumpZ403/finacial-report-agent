@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import random
@@ -197,6 +198,23 @@ _PERMANENT_ERRORS = (ImportError, AttributeError, TypeError, KeyError, NotImplem
 def _retryable(exc: BaseException) -> bool:
     """是否值得重试（网络抖动、限频、超时等一律重试）"""
     return not isinstance(exc, _PERMANENT_ERRORS)
+
+
+def _write_raw(path: Path, text: str) -> None:
+    """原始快照一律 gzip：JSON 缩进后的压缩比约 8~12 倍"""
+    if path.suffix == ".gz":
+        with gzip.open(path, "wt", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        path.write_text(text, encoding="utf-8")
+
+
+def _read_raw(path: Path) -> dict:
+    """读快照；.json.gz 与历史的 .json 都支持"""
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _compact_ts(ts: str) -> str:
@@ -442,7 +460,7 @@ class AkshareEMAdapter:
     # ---- 原始落盘（v3：原始响应，可回放）----
 
     def save_raw(self, code: str, payload: list[dict] | None = None) -> Path:
-        """原始响应落盘 storage/raw/<code>/<时间戳>-<checksum8>.json（只增不改）
+        """原始响应落盘 storage/raw/<code>/<时间戳>-<checksum8>.json.gz（只增不改，gzip）
 
         此前写的是固定路径 raw/<code>.json，每次拉取**覆盖**——财报重述后
         "上个月看到的营收"永久丢失，与"只增不改"的承诺相反。
@@ -465,8 +483,10 @@ class AkshareEMAdapter:
         checksum = hashlib.sha256(text.encode("utf-8")).hexdigest()
         path, need_write = self._snapshot_path(code, checksum, raw.get("fetched_at", ""))
         if need_write:
-            path.write_text(text, encoding="utf-8")
-            logger.info(f"[{code}] raw 落盘: {path.parent.name}/{path.name}（{len(text)} B）")
+            _write_raw(path, text)
+            logger.info(
+                f"[{code}] raw 落盘: {path.parent.name}/{path.name}"
+                f"（{path.stat().st_size} B，未压缩 {len(text)} B）")
         else:
             logger.info(f"[{code}] raw 内容与既有快照一致，复用: {path.name}")
         try:
@@ -486,23 +506,23 @@ class AkshareEMAdapter:
         """快照路径；已有同 checksum 的快照则复用（返回 False 表示无需写盘）"""
         d = self.raw_dir / code
         d.mkdir(parents=True, exist_ok=True)
-        existed = sorted(d.glob(f"*-{checksum[:8]}.json"))
+        existed = sorted(d.glob(f"*-{checksum[:8]}.json*"))
         if existed:
             return existed[-1], False
-        return d / f"{_compact_ts(fetched_at)}-{checksum[:8]}.json", True
+        return d / f"{_compact_ts(fetched_at)}-{checksum[:8]}.json.gz", True
 
     def load_raw(self, code: str) -> dict:
         """读取落盘原始响应：取最新快照，兼容 v1 时代的 raw/<code>.json"""
         code = normalize_code(code)
         snapshot_dir = self.raw_dir / code
         if snapshot_dir.is_dir():
-            files = sorted(snapshot_dir.glob("*.json"))
+            files = sorted(snapshot_dir.glob("*.json*"))
             if files:
-                return json.loads(files[-1].read_text(encoding="utf-8"))
+                return _read_raw(files[-1])
         path = self.raw_dir / f"{code}.json"
         if not path.exists():
             return {}
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _read_raw(path)
         if isinstance(data, list):
             return {"version": 1, "code": normalize_code(code), "reports": data}
         return data

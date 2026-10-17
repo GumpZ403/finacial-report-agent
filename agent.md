@@ -101,11 +101,13 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
   - `financial_periods`：报告期（(company_id, period, report_scope) 唯一）；
     `fetch_status` 记采集完整性（`ok` / `partial:cashflow` 等）——三表部分失败时该期数据不全，
     与"公司本来没这项"必须区分，报告侧据此显式标注缺失
-  - `financial_metrics`：指标长表（EAV，唯一真相，(period_id, metric_code) 复合主键）
+  - `financial_metrics`：指标长表（EAV，唯一真相，(period_id, metric_code) 复合主键）；
+    `updated_at` 记该值**最后一次实际变化**的时间（四项 value/unit/is_estimated/source 全没变就不写，
+    历史上早于该字段的行留空 = 未知）
   - `financial_core`：宽表（一行一期次，供 SQL/对比/排行，镜像 financial_metrics）
   - `metric_dict`：指标字典（75 条，含 name_cn/unit_type/formula，语义来源）
   - `peer_groups` / `anomaly_rules`：同行组 / 异常规则（离线预计算，当前空表待用）
-  - `raw_financial_payload`：原始接口响应登记，指向 `storage/raw/<code>/<时间戳>-<checksum8>.json`；
+  - `raw_financial_payload`：原始接口响应登记，指向 `storage/raw/<code>/<时间戳>-<checksum8>.json.gz`（gzip）；
     按 (company_code, checksum) 去重，文件内容变了才产生新快照（历史版本不被覆盖）
   - `data_quality_log`：L0 质量日志
 - ~~通用/配置表（3 张）：`reports` / `feedbacks` / `long_term_memories`~~ → 舆情项目遗留，**已随代码删除**，库里不存在
@@ -149,7 +151,8 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
   写 `financial_periods.fetch_status`；缺失的表**不会**被当成"空科目"入库，`fetch_slice.py`
   把 partial 计入失败清单并以非 0 退出码结束
 - **当前库（2026-10-17 真跑：akshare 1.19.1 + 东财）**：20 家公司 / 780 报告期 / 43,061 指标 /
-  指标字典 75 条；raw 快照 21 份共 46.7 MB（单家 0.1~3.1 MB，最大万科 A 3.1 MB）；
+  指标字典 75 条；raw 快照 21 份共 46.7 MB（单家 0.1~3.1 MB，最大万科 A 3.1 MB）——
+  这些是**未压缩的历史快照**，新快照一律 `.json.gz`（实测 3.06 MB → 0.28 MB，全量约 4.1 MB）；
   L0：同比 100% / 单位 100% / 长表-宽表 100% / 核心指标覆盖 99.27% / 问题 0
 - **重灌/续跑**：`scripts/fetch_slice.py [--limit N] [--only 代码,代码] [--force] [--no-prune]`
 - **流水线**：采集（akshare）→ 原始落盘（storage/raw/）→ 归一化+映射 → 入库（SQLite）

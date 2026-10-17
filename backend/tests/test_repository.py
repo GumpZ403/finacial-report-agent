@@ -11,7 +11,11 @@ import pytest
 from sqlalchemy import text as sa_text
 
 from app.domains.financial import repository as repo
-from app.domains.financial.models import FinancialPeriod, RawFinancialPayload
+from app.domains.financial.models import (
+    FinancialMetric,
+    FinancialPeriod,
+    RawFinancialPayload,
+)
 
 
 @pytest.fixture
@@ -149,3 +153,101 @@ class TestGetLatestPeriod:
         db.upsert_financial_period(b, "2023FY", period_end="2023-12-31")
         assert db.get_latest_period("600519")["period"] == "2024FY"
         assert db.get_latest_period("000858")["period"] == "2023FY"
+
+
+class TestMetricsUpsert:
+    """P2：变更检测（updated_at 只在真变时推进）+ 消除 N+1"""
+
+    def _seed(self, db):
+        cid = db.upsert_company("600519", "贵州茅台")
+        return db.upsert_financial_period(cid, "2024FY", period_end="2024-12-31")
+
+    def _stamp(self, db, pid, code, ts):
+        """把 updated_at 改成哨兵值，用来观察后续写入是否推进它"""
+        with db.get_session() as s:
+            row = s.query(FinancialMetric).filter_by(
+                period_id=pid, metric_code=code).first()
+            row.updated_at = ts
+            s.commit()
+
+    def _get(self, db, pid, code):
+        with db.get_session() as s:
+            return s.query(FinancialMetric).filter_by(
+                period_id=pid, metric_code=code).first()
+
+    def test_first_write_sets_updated_at(self, db):
+        pid = self._seed(db)
+        assert db.upsert_metrics(pid, {"revenue": 1.0}) == 1
+        row = self._get(db, pid, "revenue")
+        assert row.value == 1.0 and row.updated_at
+
+    def test_unchanged_write_does_not_touch_updated_at(self, db):
+        pid = self._seed(db)
+        db.upsert_metrics(pid, {"revenue": 1.0, "net_profit": 2.0})
+        self._stamp(db, pid, "revenue", "1999-01-01 00:00:00")
+        db.upsert_metrics(pid, {"revenue": 1.0, "net_profit": 2.0})   # 同样的值
+        assert self._get(db, pid, "revenue").updated_at == "1999-01-01 00:00:00"
+
+    def test_changed_value_bumps_updated_at(self, db):
+        pid = self._seed(db)
+        db.upsert_metrics(pid, {"revenue": 1.0})
+        self._stamp(db, pid, "revenue", "1999-01-01 00:00:00")
+        db.upsert_metrics(pid, {"revenue": 1.5})                      # 值变了
+        row = self._get(db, pid, "revenue")
+        assert row.value == 1.5
+        assert row.updated_at != "1999-01-01 00:00:00"
+
+    def test_source_change_counts_as_change(self, db):
+        pid = self._seed(db)
+        db.upsert_metrics(pid, {"revenue": 1.0}, sources="eastmoney")
+        self._stamp(db, pid, "revenue", "1999-01-01 00:00:00")
+        db.upsert_metrics(pid, {"revenue": 1.0}, sources="derived")
+        row = self._get(db, pid, "revenue")
+        assert row.source == "derived"
+        assert row.updated_at != "1999-01-01 00:00:00"
+
+    def test_is_estimated_change_counts_as_change(self, db):
+        pid = self._seed(db)
+        db.upsert_metrics(pid, {"revenue": 1.0}, is_estimated=0)
+        self._stamp(db, pid, "revenue", "1999-01-01 00:00:00")
+        db.upsert_metrics(pid, {"revenue": 1.0}, is_estimated=1)
+        assert self._get(db, pid, "revenue").updated_at != "1999-01-01 00:00:00"
+
+    def test_one_select_for_whole_batch(self, db):
+        """60 个指标只发 1 次 SELECT（原来是 60 次）"""
+        from sqlalchemy import event
+
+        pid = self._seed(db)
+        db._metric_meta()          # 预热 metric_dict 缓存，避免它干扰计数
+        metrics = {f"m{i}": float(i) for i in range(60)}
+        stmts: list[str] = []
+
+        def _rec(conn, cursor, statement, params, context, executemany):
+            stmts.append(statement.lstrip()[:20].upper())
+
+        event.listen(db.engine, "before_cursor_execute", _rec)
+        try:
+            n = db.upsert_metrics(pid, metrics)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", _rec)
+        selects = [s for s in stmts if s.startswith("SELECT")]
+        assert n == 60
+        assert len(selects) == 1, f"应只有 1 次 SELECT，实际 {len(selects)} 次"
+
+    def test_second_identical_upsert_is_read_only(self, db):
+        """重复写同样的值：只有查询与 commit，没有 UPDATE"""
+        from sqlalchemy import event
+
+        pid = self._seed(db)
+        db.upsert_metrics(pid, {f"m{i}": float(i) for i in range(20)})
+        stmts: list[str] = []
+
+        def _rec(conn, cursor, statement, params, context, executemany):
+            stmts.append(statement.lstrip()[:20].upper())
+
+        event.listen(db.engine, "before_cursor_execute", _rec)
+        try:
+            db.upsert_metrics(pid, {f"m{i}": float(i) for i in range(20)})
+        finally:
+            event.remove(db.engine, "before_cursor_execute", _rec)
+        assert not [s for s in stmts if s.startswith("UPDATE")]
