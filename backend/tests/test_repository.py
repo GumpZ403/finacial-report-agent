@@ -98,7 +98,7 @@ class TestWindowPrune:
                                           source="akshare"), cid
 
     def test_prune_by_date_not_calendar_year(self, db):
-        from app.domains.financial.dates import years_ago
+        from app.domains.financial.fiscal_calendar import years_ago
         cutoff = years_ago(10)
         old_pid, _ = self._seed(db, "600519", "1999FY", (cutoff - timedelta(days=1)).isoformat())
         keep_pid, _ = self._seed(db, "600519", "2024FY", cutoff.isoformat())

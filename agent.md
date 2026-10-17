@@ -53,14 +53,19 @@ D:\A_projects\finacial-report-agent\
 │   │   │   │   ├── graph.py        #     主图：classify → 条件边 → simple / react / plan / chat
 │   │   │   │   └── react.py        #     ReAct：标准 FC 协议（assistant(tool_calls) → tool(tool_call_id)）
 │   │   │   ├── financial\          #   财报数据（东财三表单一数据源）
-│   │   │   │   ├── models.py       #     SQLAlchemy 表模型
-│   │   │   │   ├── repository.py   #     SQLite 仓储（唯一数据入口）
-│   │   │   │   ├── scope.py        #     行业模板适用范围（financial 模板 N/A 清单）
+│   │   │   │   ├── models.py       #     SQLAlchemy 表模型（9 张表）
+│   │   │   │   ├── db.py           #     引擎 / 会话 / 建表迁移（REQUIRED_COLUMNS 在此）
+│   │   │   │   ├── repository.py   #     读写仓储（纯 CRUD）
+│   │   │   │   ├── formula.py      #     公式求值（AST 白名单，纯函数，可单测）
+│   │   │   │   ├── display.py      #     单位语义 + 展示形态（唯一格式化实现）
+│   │   │   │   ├── fiscal_calendar.py #  期次窗口 + 披露节奏（纯函数）
+│   │   │   │   ├── industry_scope.py #   行业模板 × 指标适用性（financial 模板 N/A 清单）
 │   │   │   │   ├── quality.py      #     L0 质量校验
-│   │   │   │   ├── textify.py      #     结构化数据 → 可读文本片段（供 RAG）
-│   │   │   │   ├── formatting.py   #     指标值按 unit_type 渲染（亿元 / % / 倍 / 天）
-│   │   │   │   ├── ingest\         #     外部数据源适配（akshare 东财三表 + 原始落盘 + 回放）
-│   │   │   │   └── tools\          #     注册给 LLM：query_company / query_financials / query_data_stats
+│   │   │   │   ├── corpus.py       #     结构化数据 → 检索语料片段（供 RAG）
+│   │   │   │   ├── ingest\         #     外部数据入口
+│   │   │   │   │   ├── eastmoney.py #      东财三表采集（akshare + 重试 + gzip 快照 + 回放）
+│   │   │   │   │   └── mapping.py   #      列名映射与归一化（纯函数）
+│   │   │   │   └── tools\          #     注册给 LLM（文件名 == 工具名）
 │   │   │   ├── retrieval\          #   检索
 │   │   │   │   ├── vector.py       #     ChromaDB 向量库（financial_chunks）
 │   │   │   │   ├── hybrid.py       #     混合检索（向量 + BM25，min-max 归一加权）
@@ -136,14 +141,14 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 - **不再做**：新浪双源（已退役）、双源交叉验证（单次/累计口径对不上）、L0 回算死检查
 - **期次窗口**：唯一来源 `Settings.PERIOD_WINDOW_YEARS`（默认 10，`.env` 可改）；
   `build_reports()` 入库裁剪与 `prune_out_of_window()` 清理都读它，不再有两处硬编码。
-  判定按**日期**（`period_end ≥ 今天往前推 N 年`，见 `domains/financial/dates.py:years_ago`），
+  判定按**日期**（`period_end ≥ 今天往前推 N 年`，见 `domains/financial/fiscal_calendar.py:years_ago`），
   不按年份字符串比大小——否则每年 1 月窗口会退化成"9 年出头"。raw 快照保存全历史，只有入库按窗口裁剪
 - **采集重试**：单表最多 3 次、指数退避（1s→2s→4s）、请求间隔带 ±20% 抖动；
   永久性错误（`ImportError/AttributeError/TypeError/KeyError`，即接口签名变了）立即放弃，不做无意义重试
-- **增量拉取**：若某家最新期次 == 按披露日历应已发布的期次（`dates.py:latest_disclosed_period`，
+- **增量拉取**：若某家最新期次 == 按披露日历应已发布的期次（`fiscal_calendar.py:latest_disclosed_period`，
   一季报 4/30 / 半年报 8/31 / 三季报 10/31，1~4 月只认上年三季报），且上次采集完整、
   `FRESH_DAYS=7` 天内拉过 → 本轮跳过（`--force` 强制重拉）。
-  比较用 `period_end`（`dates.py:period_end_of`）而不是 `period` 字符串：字母序不是时间序
+  比较用 `period_end`（`fiscal_calendar.py:period_end_of`）而不是 `period` 字符串：字母序不是时间序
   （`2026FY < 2026H1 < 2026Q1 < 2026Q3`），而且个别公司会提前披露，库里比日历更新也算 fresh
 - **窗口清理**：`fetch_slice.py` 每拉完一家就对该家 `prune_out_of_window(company_code=...)`，
   只清本案公司（局部 `--limit` 运行不会误删别家），`--no-prune` 可关闭
@@ -159,7 +164,7 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
   → L0 校验 → 文本化 → 向量化（ChromaDB）
 
 ### 4.3 向量库（ChromaDB，财报版）
-- `app/domains/financial/textify.py`：结构化财报 → 可读文本片段（overview 综合段 + anomaly 异常段 + trend 趋势段）
+- `app/domains/financial/corpus.py`：结构化财报 → 可读文本片段（overview 综合段 + anomaly 异常段 + trend 趋势段）
 - `app/domains/retrieval/vector.py`：`financial_chunks` 集合，元数据 `company_code / company_name / period / group`
 - **状态：1589 片段已落库**（茅台 2025Q1 营收命中 0.79、宁德趋势命中 0.78，检索实测通过）；
   embedding = bge-base-zh-v1.5（768 维），reranker = bge-reranker-v2-m3（本地缓存）
@@ -193,7 +198,7 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 ## 7. 关键工程约束
 
 1. **规则化计算**：指标派生/校验/异常判定全部在 SQL/pandas/Python，禁止交给 LLM 算数
-2. **数据源纪律**：外部数据只走 `app/domains/financial/ingest/akshare_em.py`；映射变更后原始响应可从 `storage/raw/` 回放重算
+2. **数据源纪律**：外部数据只走 `app/domains/financial/ingest/eastmoney.py`；映射变更后原始响应可从 `storage/raw/` 回放重算
 3. **幂等入库**：所有 upsert 按业务唯一键，重复运行不产生脏数据
 4. **合规**：涉及个股的回复不构成投资建议，输出标注数据来源与口径
 5. **工具契约**：handler 签名统一 `(args: dict, on_stage=None) -> dict`；工具在模块加载时自动注册

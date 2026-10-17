@@ -14,9 +14,9 @@
 - 纯转换，不依赖 LLM、不连网络；所有计算在 Python 完成
 
 用法（原 M3 缺失的全量向量化入口）：
-    python -m app.domains.financial.textify --dry --limit 2        # 只生成并打印样例，不入向量库
-    python -m app.domains.financial.textify --company 300750       # 重建单家公司（先删后写）
-    python -m app.domains.financial.textify --all --reindex        # 清空重建全量（20 家）
+    python -m app.domains.financial.corpus --dry --limit 2        # 只生成并打印样例，不入向量库
+    python -m app.domains.financial.corpus --company 300750       # 重建单家公司（先删后写）
+    python -m app.domains.financial.corpus --all --reindex        # 清空重建全量（20 家）
 """
 from __future__ import annotations
 
@@ -486,9 +486,9 @@ def textify_and_index(db=None, limit: int | None = None,
 
 if __name__ == "__main__":
     # 用法：
-    #   python -m app.domains.financial.textify --dry --limit 2
-    #   python -m app.domains.financial.textify --company 300750
-    #   python -m app.domains.financial.textify --all --reindex
+    #   python -m app.domains.financial.corpus --dry --limit 2
+    #   python -m app.domains.financial.corpus --company 300750
+    #   python -m app.domains.financial.corpus --all --reindex
     import sys
 
     argv = sys.argv[1:]

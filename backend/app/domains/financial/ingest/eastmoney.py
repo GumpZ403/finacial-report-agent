@@ -21,7 +21,7 @@ from typing import Protocol, runtime_checkable
 
 from loguru import logger
 
-from app.domains.financial.dates import years_ago
+from app.domains.financial.fiscal_calendar import years_ago
 from app.domains.financial.ingest.mapping import (
     EM_BALANCE_MAP, EM_CASHFLOW_MAP, EM_PROFIT_MAP,
     _em_symbol, _is_na, _jsonable, _normalize_end, _period_from_end, em_rows,

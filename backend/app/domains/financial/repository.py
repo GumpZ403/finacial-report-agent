@@ -8,7 +8,7 @@
     db.py       引擎 / 会话 / 建表迁移
     formula.py  公式求值（纯函数）
     display.py  单位语义与展示形态
-    dates.py    期次窗口与披露日历
+    fiscal_calendar.py    期次窗口与披露日历
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.platform.settings import get_settings
 from app.domains.financial.db import build_engine, init_tables, make_session_factory
-from app.domains.financial.dates import years_ago
+from app.domains.financial.fiscal_calendar import years_ago
 from app.domains.financial.display import UNIT_BY_TYPE, UNIT_UNKNOWN
 from app.domains.financial.formula import safe_eval_formula
 from app.domains.financial.industry_scope import normalize_template

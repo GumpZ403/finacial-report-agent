@@ -21,7 +21,7 @@ from app.domains.financial.ingest.mapping import (
     _normalize_end,
     _period_from_end,
 )
-from app.domains.financial.dates import years_ago
+from app.domains.financial.fiscal_calendar import years_ago
 from app.domains.financial.ingest.eastmoney import (
     AkshareEMAdapter,
     FetchResult,

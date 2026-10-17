@@ -2,7 +2,7 @@
 向量数据库层（ChromaDB 封装）— 财报版
 - 使用 ChromaDB PersistentClient 本地持久化，落盘目录取 settings.CHROMA_PERSIST_DIR
 - 集合 financial_chunks，hnsw:space=cosine
-- 每条 chunk = 一个"公司 × 报告期"的文本片段（textify.py 生成），
+- 每条 chunk = 一个"公司 × 报告期"的文本片段（corpus.py 生成），
   metadata 携带 company_code / company_name / period / period_type / group
 - 支持幂等写入（按 chunk_id upsert）、元数据过滤（where）、按公司删除
 
@@ -31,7 +31,7 @@ from app.platform.embedding import get_embedding_service
 
 COLLECTION_NAME = "financial_chunks"
 
-# chunk 分组标记（textify.py 写入）
+# chunk 分组标记（corpus.py 写入）
 GROUP_OVERVIEW = "overview"   # 综合描述段
 GROUP_ANOMALY = "anomaly"     # 异常关注段
 

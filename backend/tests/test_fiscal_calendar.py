@@ -1,4 +1,4 @@
-"""财报日历（dates.py）：期次窗口与披露节奏
+"""财报日历（fiscal_calendar.py）：期次窗口与披露节奏
 
 这两个函数决定了"入库保留多久"和"还需要不需要再拉"，错一天就会漏数据或多拉。
 """
@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from app.domains.financial.dates import (
+from app.domains.financial.fiscal_calendar import (
     latest_disclosed_period,
     period_end_of,
     years_ago,

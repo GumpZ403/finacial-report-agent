@@ -78,8 +78,8 @@ cd backend
 #   退出码：任一家失败／采集不完整 → 1（便于定时任务判断）
 #   窗口：Settings.PERIOD_WINDOW_YEARS（默认 10 年，.env 可改）
 ..\.venv\Scripts\python.exe -m app.domains.financial.quality                 # L0 全库校验并写 data_quality_log
-..\.venv\Scripts\python.exe -m app.domains.financial.textify --all --reindex  # 全量文本化 + 重建向量库
-..\.venv\Scripts\python.exe -m app.domains.financial.textify --dry --limit 2  # 只看文本片段质量，不入库
+..\.venv\Scripts\python.exe -m app.domains.financial.corpus --all --reindex  # 全量文本化 + 重建向量库
+..\.venv\Scripts\python.exe -m app.domains.financial.corpus --dry --limit 2  # 只看文本片段质量，不入库
 ..\.venv\Scripts\python.exe -m app.domains.financial.ingest.eastmoney replay 300750 # 按当前映射离线回放原始响应
 ..\.venv\Scripts\python.exe scripts\inspect_db.py all            # SQLite / Chroma 概览
 ```
@@ -106,7 +106,7 @@ cd backend
 **已知问题 / 待办**：
 - **本地库已灌数**（2026-10-17，akshare 1.19.1 + 东财）：20 家公司 / 780 报告期 / 43,061 指标；
   L0 = 同比 100% / 单位 100% / 长表-宽表 100% / 核心指标覆盖 99.27% / 问题 0。
-  `storage/chroma_db` 仍是 0 向量（文本化未跑：`python -m app.domains.financial.textify --all --reindex`）。
+  `storage/chroma_db` 仍是 0 向量（文本化未跑：`python -m app.domains.financial.corpus --all --reindex`）。
 - 会话记忆：**写已落 SQLite**（`storage/conversations.db`），读仍走进程内 Memory，重启后历史不会回到上下文。
 - 报告阶段仍是“模板 DAG + 一次长文生成”，八章结构 / 数字白名单溯源 / 投研合规校验（方案 §6）未落地；
   写作子代理（多 agent 协作）只有接口约定（`domains/report/agents/`）。

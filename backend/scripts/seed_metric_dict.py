@@ -3,7 +3,7 @@
 指标字典种子脚本（方案 v1.1 附录 B + 东财三表扩展）
 - 写入 metric_dict（含东财原生科目 + 派生公式）
 - 幂等：已存在的 metric_code 更新、别名 upsert
-- 公式只基于东财三表真实科目（见 app/domains/financial/ingest/akshare_em.py 映射表），无依据的不编造
+- 公式只基于东财三表真实科目（见 app/domains/financial/ingest/mapping.py 映射表），无依据的不编造
 用法：.venv/Scripts/python.exe scripts/seed_metric_dict.py
 """
 import sys

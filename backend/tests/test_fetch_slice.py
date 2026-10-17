@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from scripts import fetch_slice
-from app.domains.financial.dates import period_end_of
+from app.domains.financial.fiscal_calendar import period_end_of
 
 
 class FakeDB:

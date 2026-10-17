@@ -4,7 +4,7 @@ akshare 字段可用性探测（映射表核对，只读）
 
 目的：回答"映射表左边的键名，在接口返回里到底存不存在"。
 做法：真实拉取几家公司的东财摘要 + 新浪财务指标，收集**全部**字段名，与
-      `app/domains/financial/ingest/akshare_em.py` 里的 ABSTRACT_MAP / INDICATOR_MAP 逐字比对，输出三类清单：
+      `app/domains/financial/ingest/mapping.py` 里的 ABSTRACT_MAP / INDICATOR_MAP 逐字比对，输出三类清单：
         1. 命中      —— 映射表的键在接口里存在
         2. 未命中    —— 映射表里有、接口里没有（死映射，应删）
         3. 未映射    —— 接口里有、我们没用（可扩展空间）
