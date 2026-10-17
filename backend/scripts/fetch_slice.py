@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger
 
-from app.data.datasource import get_adapter
-from app.data.repository import get_db
+from app.domains.financial.ingest.akshare_em import get_adapter
+from app.domains.financial.repository import get_db
 
 # (code, name, industry_l1, industry_l2, industry_template)
 SLICE = [
@@ -98,7 +98,7 @@ def main(limit: int = 20):
     )
 
     # L0 走数据层唯一实现（全库校验，不再对单个报告期抽样）
-    from app.data.quality import run_l0
+    from app.domains.financial.quality import run_l0
     l0 = run_l0(db=db)
     logger.info(
         f"L0（全库）: 回算 {l0['recompute_pass_rate']}% / 同比 {l0['yoy_pass_rate']}% / "

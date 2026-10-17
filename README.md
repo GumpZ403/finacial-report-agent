@@ -69,10 +69,10 @@ cd backend
 
 ```powershell
 ..\.venv\Scripts\python.exe scripts\fetch_slice.py --limit 20   # 拉取 20 家切片（东财三表，网络）并跑 L0
-..\.venv\Scripts\python.exe -m app.data.quality                 # L0 全库校验并写 data_quality_log
-..\.venv\Scripts\python.exe -m app.data.textify --all --reindex  # 全量文本化 + 重建向量库
-..\.venv\Scripts\python.exe -m app.data.textify --dry --limit 2  # 只看文本片段质量，不入库
-..\.venv\Scripts\python.exe -m app.data.datasource replay 300750 # 按当前映射离线回放原始响应
+..\.venv\Scripts\python.exe -m app.domains.financial.quality                 # L0 全库校验并写 data_quality_log
+..\.venv\Scripts\python.exe -m app.domains.financial.textify --all --reindex  # 全量文本化 + 重建向量库
+..\.venv\Scripts\python.exe -m app.domains.financial.textify --dry --limit 2  # 只看文本片段质量，不入库
+..\.venv\Scripts\python.exe -m app.domains.financial.ingest.akshare_em replay 300750 # 按当前映射离线回放原始响应
 ..\.venv\Scripts\python.exe scripts\inspect_db.py all            # SQLite / Chroma 概览
 ```
 

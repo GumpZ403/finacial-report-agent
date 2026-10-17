@@ -36,51 +36,62 @@
 
 ```
 D:\A_projects\finacial-report-agent\
-├── backend\                 # 后端（Python，以本目录为工作目录运行）
+├── backend\                        # 后端（Python，以本目录为工作目录运行）
 │   ├── app\
-│   ├── scripts\             # 个人用脚本（拉数/校验/查库）
-│   ├── tests\               # pytest 基线
+│   │   ├── main.py                 # 组合根：FastAPI 应用 + 路由挂载 + 前端产物托管 + 工具注册
+│   │   ├── interfaces\http\        # 协议适配层（只做请求/响应与 SSE 编码，不含业务）
+│   │   │   ├── schemas.py          #   请求/响应 Pydantic 模型
+│   │   │   └── routes\agent.py     #   /api/agent/chat · /chat/stream(SSE) · /memory · /clear
+│   │   ├── harness\                # Agent 运行时（与业务无关）
+│   │   │   ├── llm.py              #   LLM 客户端（OpenAI 兼容：重试 / JSON / function calling）
+│   │   │   ├── state.py            #   AgentState 共享黑板（query/intent/tool_calls/messages/answer）
+│   │   │   ├── registry.py         #   工具注册表（schema 给 LLM 决策，handler 给系统执行）
+│   │   │   └── memory.py           #   会话记忆（短期滑窗 + 超限 LLM 摘要压缩）
+│   │   ├── domains\                # 业务领域包
+│   │   │   ├── conversation\       #   对话编排（单 agent 入口）
+│   │   │   │   ├── routing.py      #     classify：一次 LLM 调用产出 intent + task_type + entities
+│   │   │   │   ├── graph.py        #     主图：classify → 条件边 → simple / react / plan / chat
+│   │   │   │   └── react.py        #     ReAct：标准 FC 协议（assistant(tool_calls) → tool(tool_call_id)）
+│   │   │   ├── financial\          #   财报数据（东财三表单一数据源）
+│   │   │   │   ├── models.py       #     SQLAlchemy 表模型
+│   │   │   │   ├── repository.py   #     SQLite 仓储（唯一数据入口）
+│   │   │   │   ├── scope.py        #     行业模板适用范围（financial 模板 N/A 清单）
+│   │   │   │   ├── quality.py      #     L0 质量校验
+│   │   │   │   ├── textify.py      #     结构化数据 → 可读文本片段（供 RAG）
+│   │   │   │   ├── formatting.py   #     指标值按 unit_type 渲染（亿元 / % / 倍 / 天）
+│   │   │   │   ├── ingest\         #     外部数据源适配（akshare 东财三表 + 原始落盘 + 回放）
+│   │   │   │   └── tools\          #     注册给 LLM：query_company / query_financials / query_data_stats
+│   │   │   ├── retrieval\          #   检索
+│   │   │   │   ├── vector.py       #     ChromaDB 向量库（financial_chunks）
+│   │   │   │   ├── hybrid.py       #     混合检索（向量 + BM25，min-max 归一加权）
+│   │   │   │   ├── reranker.py     #     Cross-Encoder 重排
+│   │   │   │   └── tools.py        #     注册给 LLM：rag_search
+│   │   │   └── report\             #   报告
+│   │   │       ├── graph.py        #     Plan&Solve 报告图（当前是模板 DAG + 一次长文生成）
+│   │   │       ├── agents\         #     写作子代理（多 agent 协作）——待实现，接口约定见包内 docstring
+│   │   │       └── export.py       #     Markdown → docx
+│   │   └── platform\               # 进程级基础设施：settings(配置/路径) / embedding(模型封装)
+│   ├── scripts\                    # 个人用脚本（拉数/校验/查库）
+│   ├── tests\                      # pytest
 │   ├── requirements.txt
-│   └── pyproject.toml       # pytest 配置
-├── frontend\                # Vue3 + Vite 前端（唯一前端，dist/ 由 FastAPI 托管）
-├── app\（backend\app\ 内部结构）
-│   ├── main.py              # FastAPI 入口：挂 agent 路由 + /health + 托管 frontend/dist + /reports
-│   │                        #   ★ 显式 import app.tools.financial_tools 触发工具自动注册
-│   ├── api\agent.py         # HTTP 层：/api/agent/chat · /chat/stream(SSE) · /memory · /clear
-│   ├── agent\               # 编排层（LangGraph，单 LLM + 标准 function calling）
-│   │   ├── state.py         #   AgentState 共享黑板（query/intent/task/tool_calls/messages/answer）
-│   │   ├── classify.py      #   分类节点：LLM 结构化输出 intent + task_type + entities（一次调用）
-│   │   ├── graph.py         #   主图：classify → 条件边 → 四条路径（simple/react/plan/chat）
-│   │   ├── react_subgraph.py #  ReAct：标准 FC 协议（assistant(tool_calls) → tool(tool_call_id) → ...）
-│   │   ├── plan_subgraph.py #   Plan：长任务模板计划执行 + 写作节点
-│   │   └── tools_registry.py #  工具注册表：schema 给 LLM 决策，handler 给系统执行（自动注册）
-│   ├── tools\               # 工具层（注册给 LLM）
-│   │   ├── financial_tools.py # 4 工具：query_company / query_financials / query_data_stats / rag_search
-│   │   └── rag\             #   retriever（ChromaDB 向量 + BM25 融合）/ reranker（Cross-Encoder）
-│   ├── core\                # 通用能力：config / llm_client / embedding / memory / prompt_loader / md_docx
-│   ├── data\                # 数据层（7 步链路闭环）
-│   │   ├── schema.py        #   SQLAlchemy 12 张表定义
-│   │   ├── datasource.py    #   akshare 东财三表采集 + EM_*_MAP 映射表归一化
-│   │   ├── metric_scope.py  #   行业模板 N/A 清单
-│   │   ├── quality.py       #   L0 质量校验
-│   │   ├── textify.py       #   财报文本化（overview/anomaly/trend）
-│   │   ├── vector_db.py     #   ChromaDB 向量库
-│   │   └── repository.py    #   SQLite 查询仓储（工具层唯一数据源）
-│   └── （static\index.html 已删除，前端统一走 frontend/）
-├── docs\                    # 方案文档（改造依据）
-├── storage\                 # financial.db / raw（原始json）/ chroma_db（1589 片段）
-├── models\                  # 本地模型缓存（bge embedding / reranker）
-├── reports\                 # 报告输出目录
-├── logs\                    # 日志
+│   └── pyproject.toml              # pytest 配置
+├── frontend\                       # Vue3 + Vite（唯一前端，dist/ 由 FastAPI 托管）
+├── docs\                           # 方案文档（改造依据）
+├── storage\                        # financial.db / raw（原始json）/ chroma_db
+├── models\                         # 本地模型缓存（bge embedding / reranker）
+├── reports\                        # 报告输出目录
+├── logs\                           # 日志
 └── .env  agent.md  README.md
 ```
 
 **请求数据流**：前端（Vue3，`frontend/`）→ `POST /api/agent/chat`（或 SSE `/chat/stream`）
-→ `app/agent/graph.py`（classify 分类 → 条件边 → 执行路径）→ `tools/*`（function calling）
-→ 返回 `{intent, agent, reply, meta}` → 前端渲染。
+→ `app/domains/conversation/graph.py`（classify 分类 → 条件边 → 执行路径）
+→ `app/harness/registry.py` 里注册的工具（function calling）→ 返回 `{intent, agent, reply, meta}`。
 
-**分层纪律**：数据访问只走 `app/data/repository.py`；外部数据源只走 `app/data/datasource.py`；
-向量检索只走 `app/data/vector_db.py`；Agent 不直接碰库，只通过 `tools/*` 调用。
+**分层纪律**：数据访问只走 `domains/financial/repository.py`；外部数据源只走
+`domains/financial/ingest/`；向量检索只走 `domains/retrieval/vector.py`；
+Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry.py` 的工具调用。
+依赖方向只允许：`interfaces → domains → harness/platform`；`harness` 不得 import `domains`。
 
 ## 4. 数据架构
 
@@ -113,8 +124,8 @@ D:\A_projects\finacial-report-agent\
   → L0 校验 → 文本化 → 向量化（ChromaDB）
 
 ### 4.3 向量库（ChromaDB，财报版）
-- `app/data/textify.py`：结构化财报 → 可读文本片段（overview 综合段 + anomaly 异常段 + trend 趋势段）
-- `app/data/vector_db.py`：`financial_chunks` 集合，元数据 `company_code / company_name / period / group`
+- `app/domains/financial/textify.py`：结构化财报 → 可读文本片段（overview 综合段 + anomaly 异常段 + trend 趋势段）
+- `app/domains/retrieval/vector.py`：`financial_chunks` 集合，元数据 `company_code / company_name / period / group`
 - **状态：1589 片段已落库**（茅台 2025Q1 营收命中 0.79、宁德趋势命中 0.78，检索实测通过）；
   embedding = bge-base-zh-v1.5（768 维），reranker = bge-reranker-v2-m3（本地缓存）
 - `rag_search` 工具：混合检索（向量 + BM25 加权融合，alpha=0.5）→ Cross-Encoder 重排 → 返回片段
@@ -147,7 +158,7 @@ D:\A_projects\finacial-report-agent\
 ## 7. 关键工程约束
 
 1. **规则化计算**：指标派生/校验/异常判定全部在 SQL/pandas/Python，禁止交给 LLM 算数
-2. **数据源纪律**：外部数据只走 `app/data/datasource.py`；映射变更后原始响应可从 `storage/raw/` 回放重算
+2. **数据源纪律**：外部数据只走 `app/domains/financial/ingest/akshare_em.py`；映射变更后原始响应可从 `storage/raw/` 回放重算
 3. **幂等入库**：所有 upsert 按业务唯一键，重复运行不产生脏数据
 4. **合规**：涉及个股的回复不构成投资建议，输出标注数据来源与口径
 5. **工具契约**：handler 签名统一 `(args: dict, on_stage=None) -> dict`；工具在模块加载时自动注册

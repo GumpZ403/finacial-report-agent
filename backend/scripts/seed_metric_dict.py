@@ -3,7 +3,7 @@
 指标字典种子脚本（方案 v1.1 附录 B + 东财三表扩展）
 - 写入 metric_dict（含东财原生科目 + 派生公式）
 - 幂等：已存在的 metric_code 更新、别名 upsert
-- 公式只基于东财三表真实科目（见 app/data/datasource.py 映射表），无依据的不编造
+- 公式只基于东财三表真实科目（见 app/domains/financial/ingest/akshare_em.py 映射表），无依据的不编造
 用法：.venv/Scripts/python.exe scripts/seed_metric_dict.py
 """
 import sys
@@ -11,8 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger
-from app.data.repository import get_db
-from app.data.schema import MetricDict
+from app.domains.financial.repository import get_db
+from app.domains.financial.models import MetricDict
 
 # (code, name_cn, aliases, unit_type, direction, formula, industry_scope, is_core占位, description)
 # 公式说明：

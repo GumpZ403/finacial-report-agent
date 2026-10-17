@@ -19,10 +19,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from app.core.config import get_settings
-from app.api.agent import router as agent_router
-# 工具层：显式导入以触发 _register() 自动注册（否则 uvicorn 启动后 LLM 看不到任何工具）
-import app.tools.financial_tools  # noqa: F401
+from app.platform.settings import get_settings
+from app.interfaces.http.routes.agent import router as agent_router
+# 组合根：显式 import 各领域的工具包以触发注册（否则 uvicorn 启动后 LLM 看不到任何工具）
+import app.domains.financial.tools  # noqa: F401  注册 query_company / query_financials / query_data_stats
+import app.domains.retrieval.tools  # noqa: F401  注册 rag_search
 
 
 _NOT_BUILT = {

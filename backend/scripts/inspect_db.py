@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from loguru import logger
 logger.remove()
 
-from app.data.repository import get_db
+from app.domains.financial.repository import get_db
 
 
 # ---------- SQLite（财报域） ----------
@@ -29,7 +29,7 @@ def show_sqlite(company: str | None = None):
     print("SQLite（storage/financial.db）")
     print("=" * 60)
     with db.get_session() as s:
-        from app.data.schema import (
+        from app.domains.financial.models import (
             CompanyMaster, FinancialPeriod, FinancialMetric,
             MetricDict, FinancialCore, DataQualityLog,
         )
@@ -84,7 +84,7 @@ def show_sqlite(company: str | None = None):
 # ---------- ChromaDB ----------
 def show_chroma():
     try:
-        from app.data.vector_db import get_vector_store
+        from app.domains.retrieval.vector import get_vector_store
         vs = get_vector_store()
         print("\n" + "=" * 60)
         print("ChromaDB（财报向量库）")

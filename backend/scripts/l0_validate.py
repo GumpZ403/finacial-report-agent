@@ -2,7 +2,7 @@
 """
 L0 数据质量校验（兼容入口）
 
-校验逻辑统一在数据层：`app/data/quality.py`（方案 v1.1 §8.3）。
+校验逻辑统一在数据层：`app/domains/financial/quality.py`（方案 v1.1 §8.3）。
 本脚本只做参数解析与结果打印，避免此前"scripts 与数据层两份 L0 实现"的重复。
 
 用法：
@@ -17,8 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.data.quality import run_l0          # noqa: E402
-from app.data.repository import get_db       # noqa: E402
+from app.domains.financial.quality import run_l0          # noqa: E402
+from app.domains.financial.repository import get_db       # noqa: E402
 
 
 def main():

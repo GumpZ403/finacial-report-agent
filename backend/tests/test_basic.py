@@ -1,42 +1,59 @@
-"""
-基础测试：验证各模块可正常导入和初始化
-运行：pytest tests/ -v
+"""基础烟测：验证各层模块可正常导入、配置可解析
+
+运行：cd backend && python -m pytest
+（业务行为测试见 test_harness.py / test_api.py，下一步补齐）
+
+历史说明：本文件此前混入了上一项目（舆情）遗留用例，引用 query_rewrite / rag_agent /
+intent / tools.report.* 等已删除模块，导致 8 个用例恒失败（CI 假绿反面的“假红”）。
 """
 import sys
 from pathlib import Path
 
-# 确保项目根目录在 sys.path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+# 确保 backend/ 在 sys.path（pyproject 里也有 pythonpath=["."]，这里是双保险）
+BACKEND_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(BACKEND_ROOT))
 
 
 class TestCoreImports:
-    """测试核心模块导入"""
+    """platform / harness 层"""
 
     def test_config_import(self):
-        from app.core.config import get_settings
+        from app.platform.settings import get_settings
         settings = get_settings()
         assert settings is not None
-        assert settings.LLM_MODEL is not None
+        assert settings.LLM_MODEL
+        # 相对路径必须按仓库根绝对化（与 cwd 无关）
+        assert Path(settings.CHROMA_PERSIST_DIR).is_absolute()
+        assert "sqlite:///" in settings.DATABASE_URL
+        assert Path(settings.DATABASE_URL.replace("sqlite:///", "")).is_absolute()
 
     def test_llm_client_import(self):
-        from app.core.llm_client import LLMClient
+        from app.harness.llm import LLMClient
         assert LLMClient is not None
 
     def test_embedding_import(self):
-        from app.core.embedding import EmbeddingService
+        from app.platform.embedding import EmbeddingService
         assert EmbeddingService is not None
+
+    def test_memory(self):
+        from app.harness.memory import Memory
+        memory = Memory()
+        memory.add("user", "测试问题")
+        memory.add("assistant", "测试回答")
+        assert len(memory.short_term) == 2
+        memory.clear()
+        assert len(memory.short_term) == 0
 
 
 class TestDataLayer:
-    """测试数据层（app/data）"""
+    """financial 领域"""
 
     def test_repository_import(self):
-        from app.data.repository import Database, get_db
+        from app.domains.financial.repository import Database, get_db
         assert Database is not None and get_db is not None
 
     def test_schema_import(self):
-        from app.data.schema import (
+        from app.domains.financial.models import (
             CompanyMaster, FinancialPeriod, FinancialMetric,
             FinancialCore, MetricDict,
         )
@@ -44,98 +61,62 @@ class TestDataLayer:
                     FinancialCore, MetricDict])
 
     def test_datasource_import(self):
-        from app.data.datasource import get_adapter
+        from app.domains.financial.ingest.akshare_em import get_adapter
         assert get_adapter is not None
 
+    def test_scope_import(self):
+        from app.domains.financial.scope import is_applicable, normalize_template
+        assert normalize_template("financial") == "financial"
+        assert is_applicable is not None
 
-class TestRAGLayer:
-    """测试 RAG 层（agents/rag_agent）"""
+    def test_formatting(self):
+        from app.domains.financial.formatting import fmt_value
+        assert fmt_value(1.234e9, "amount") == "12.34 亿元"
+        assert fmt_value(0.1234, "ratio") == "12.34%"
+        assert fmt_value(None, "ratio") == "N/A"
+
+
+class TestRetrieval:
+    """retrieval 领域"""
 
     def test_retriever_import(self):
-        from app.tools.rag.retriever import HybridRetriever
+        from app.domains.retrieval.hybrid import HybridRetriever
         assert HybridRetriever is not None
 
-    def test_query_rewrite_import(self):
-        from app.tools.rag.query_rewrite import QueryRewriter
-        assert QueryRewriter is not None
+    def test_vector_import(self):
+        from app.domains.retrieval.vector import VectorStore, get_vector_store
+        assert VectorStore is not None and get_vector_store is not None
 
-    def test_generator_import(self):
-        from app.tools.rag.rag_agent import RAGGenerator
-        assert RAGGenerator is not None
-
-
-class TestAgentLayer:
-    """测试 Agent 层"""
-
-    def test_intent_import(self):
-        from app.agent.intent import IntentRecognizer
-        recognizer = IntentRecognizer()
-        # 测试规则匹配
-        result = recognizer._rule_based_match("帮我生成一份周报")
-        assert result["intent"] == "report"
-
-        result = recognizer._rule_based_match("导入这个Excel文件")
-        assert result["intent"] == "data_import"
-
-    def test_memory_import(self):
-        from app.core.memory import Memory
-        memory = Memory()
-        memory.add("user", "测试问题")
-        memory.add("assistant", "测试回答")
-        assert len(memory.short_term) == 2
-
-    def test_orchestrator_import(self):
-        from app.tools.report.workflow import WorkflowEngine
-        engine = WorkflowEngine("test")
-        assert engine.name == "test"
-
-    def test_workflow_execution(self):
-        """测试简单工作流执行"""
-        from app.tools.report.workflow import WorkflowEngine
-
-        engine = WorkflowEngine("test-workflow")
-        calls = []
-
-        def step1(ctx):
-            calls.append("step1")
-            ctx.data["value"] = 1
-            return {"result": 1}
-
-        def step2(ctx):
-            calls.append("step2")
-            ctx.data["value"] += 1
-            return {"result": ctx.data["value"]}
-
-        engine.add_node("step1", step1, "第一步")
-        engine.add_node("step2", step2, "第二步")
-        engine.add_edge("step1", "step2")
-
-        result = engine.run()
-        assert result["status"] == "success"
-        assert calls == ["step1", "step2"]
-        assert result["context"]["value"] == 2
-
-    def test_agents_import(self):
-        from app.tools.report.roles.retrieval_agent import RetrievalAgent
-        from app.tools.report.roles.analysis_agent import AnalysisAgent
-        from app.tools.report.roles.writer_agent import WriterAgent
-        from app.tools.report.roles.reviewer_agent import ReviewerAgent
-        assert all([RetrievalAgent, AnalysisAgent, WriterAgent, ReviewerAgent])
-
-    def test_tools_import(self):
-        from app.tools.report.tools.search_tool import SearchTool
-        from app.tools.report.tools.write_tool import WriteTool
-        from app.tools.report.tools.compliance_tool import ComplianceTool
-        assert all([SearchTool, WriteTool, ComplianceTool])
+    def test_reranker_import(self):
+        from app.domains.retrieval.reranker import RerankerTool
+        assert RerankerTool is not None
 
 
-class TestCompliance:
-    """测试合规工具（tools/report）"""
+class TestToolRegistration:
+    """工具注册表：import 工具包即完成注册"""
 
-    def test_sensitive_word_detection(self):
-        from app.tools.report.tools.compliance_tool import ComplianceTool
-        tool = ComplianceTool()
-        hits = tool.check_sensitive_words("这篇文章涉及暴力内容")
-        assert "暴力" in hits
-        hits = tool.check_sensitive_words("这是一篇正常的新闻报道")
-        assert len(hits) == 0
+    def test_tools_registered(self):
+        import app.domains.financial.tools  # noqa: F401  触发注册
+        import app.domains.retrieval.tools  # noqa: F401
+        from app.harness.registry import list_tool_names
+
+        names = list_tool_names()
+        for expected in ("query_company", "query_financials", "query_data_stats", "rag_search"):
+            assert expected in names, f"工具 {expected} 未注册，实际：{names}"
+
+
+class TestConversationGraph:
+    """对话编排图可编译（不调用 LLM）"""
+
+    def test_graph_builds(self):
+        from app.domains.conversation.graph import get_agent_graph
+        graph = get_agent_graph()
+        assert graph is not None
+
+    def test_react_subgraph_builds(self):
+        from app.domains.conversation.react import build_react_subgraph
+        assert build_react_subgraph() is not None
+
+    def test_report_graph_builds(self):
+        from app.domains.report.graph import build_plan_subgraph
+        assert build_plan_subgraph() is not None
