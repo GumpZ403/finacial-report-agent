@@ -1,0 +1,41 @@
+# ===== Web 框架 =====
+fastapi>=0.141.1,<1.0
+uvicorn[standard]>=0.54.0,<1.0
+pydantic>=2.13.5,<3.0
+pydantic-settings>=2.15.0,<3.0
+
+# ===== 数据处理 =====
+pandas>=3.0.6,<4.0
+openpyxl>=3.1.5,<4.0          # pandas 读写 xlsx 的引擎（无直接 import）
+numpy>=2.5.3,<3.0
+
+# ===== 数据库 / 向量库 =====
+sqlalchemy>=2.1.1,<3.0
+chromadb>=1.5.9,<2.0
+
+# ===== 数据源（akshare 仅在 app/data/datasource.py 内延迟 import）=====
+akshare>=1.14.0,<2.0
+
+# ===== LLM / 编排 =====
+openai>=3.19.2,<4.0
+langgraph>=1.2.12,<2.0
+sentence-transformers>=6.1.0,<7.0
+
+# ===== 通用工具 =====
+python-dotenv>=1.2.3,<2.0
+loguru>=0.7.3,<1.0
+tenacity>=9.1.4,<10.0
+jieba>=0.42.1,<1.0
+rank-bm25>=0.2.2,<1.0
+python-docx>=1.2.0,<2.0
+
+# ===== 开发 / 测试 =====
+pytest>=9.1.1,<10.0
+httpx>=0.28.0                 # fastapi TestClient 依赖
+
+# 说明：
+# - 版本上限按 2026-10 本地 .venv 实测版本给出，避免主版本升级被动破坏。
+# - 已移除未使用依赖：redis（无落地代码）、tiktoken（无 import）、streamlit（旧原型）、
+#   python-multipart（无文件上传接口）。
+# - langchain-core 由 langgraph 传递依赖，代码无直接 import，故不单列。
+# - torch 由 sentence-transformers 传递安装，不单列。

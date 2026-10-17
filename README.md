@@ -3,10 +3,28 @@
 面向 A 股上市公司财报的解读与研究辅助 Agent：指标查询与跨公司对比、数据概览、
 公司档案、RAG 语义检索与财报解读报告生成。
 
-**架构**：LangGraph（单 LLM + 标准 function calling）+ SQLite + ChromaDB + akshare（东财三表）。
+**架构**：LangGraph（单 LLM + 标准 function calling）+ SQLite + ChromaDB + akshare（东财三表）
++ FastAPI 后端 + Vue3 前端。
 
 **合规红线**：不做预测、不给投资建议、不评级、不给目标价；所有指标计算在 SQL/pandas 完成，
 LLM 只负责自然语言理解与表达。
+
+## 目录结构
+
+```
+financial-report-agent/
+├── backend/                 Python 后端（唯一后端）
+│   ├── app/                 FastAPI + LangGraph 应用
+│   ├── scripts/             数据采集 / 巡检 / 评测脚本
+│   ├── tests/               pytest 基线测试
+│   ├── requirements.txt     依赖清单（唯一来源）
+│   └── pyproject.toml       pytest 配置
+├── frontend/                Vue3 + Vite 前端（唯一前端，构建产物 frontend/dist）
+├── storage/                 运行时数据（SQLite / Chroma / raw / cache，已 gitignore）
+├── reports/                 Agent 导出报告（已 gitignore）
+├── logs/                    运行日志（已 gitignore）
+└── docs/                    方案文档
+```
 
 ## 文档入口（按优先级）
 
@@ -18,32 +36,44 @@ LLM 只负责自然语言理解与表达。
 ## 快速开始
 
 ```powershell
-# 环境（Python 3.14 虚拟环境 + .env 已配置 DeepSeek API Key）
-.venv\Scripts\python.exe -m app.main            # 启动 Web 对话界面（http://localhost:8000）
-.venv\Scripts\python.exe -m pytest tests/ -q    # 基线测试
-```
+# 1) 后端（HTTP API + 托管前端产物）
+cd backend
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+# 或：..\.venv\Scripts\python.exe -m app.main
 
-也可用 uvicorn：`.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`
+# 2) 前端
+cd frontend
+npm install
+npm run build        # 产出 dist/，后端起服务后访问 http://127.0.0.1:8000
+# 开发模式（热更新，前端独立端口 23617，/api 反代到 8000）：
+npm run dev
+
+# 3) 测试
+cd backend
+..\.venv\Scripts\python.exe -m pytest
+```
 
 ## 一次对话的调用链
 
 ```
-前端 index.html → POST /api/agent/chat（或 SSE /chat/stream）
+前端（Vue3）→ POST /api/agent/chat/stream（SSE）
 → graph：classify（LLM 结构化输出 intent + task_type）
 → 条件边：simple（单工具）/ react（ReAct FC 循环）/ plan（长任务）/ chat（闲聊）
 → tools：query_company / query_financials / query_data_stats / rag_search（function calling）
 → 返回 {intent, agent, reply, meta}
 ```
 
-## 数据层常用命令（app/data）
+## 数据层常用命令（backend/app/data）
+
+以下命令均以 `backend/` 为工作目录：
 
 ```powershell
-.venv\Scripts\python.exe scripts\fetch_slice.py --limit 20  # 拉取 20 家切片（东财三表，网络）并跑 L0
-.venv\Scripts\python.exe -m app.data.quality                # L0 全库校验并写 data_quality_log
-.venv\Scripts\python.exe -m app.data.textify --all --reindex # 全量文本化 + 重建向量库
-.venv\Scripts\python.exe -m app.data.textify --dry --limit 2 # 只看文本片段质量，不入库
-.venv\Scripts\python.exe -m app.data.datasource replay 300750 # 按当前映射离线回放原始响应
-.venv\Scripts\python.exe scripts\inspect_db.py all          # SQLite / Chroma 概览
+..\.venv\Scripts\python.exe scripts\fetch_slice.py --limit 20   # 拉取 20 家切片（东财三表，网络）并跑 L0
+..\.venv\Scripts\python.exe -m app.data.quality                 # L0 全库校验并写 data_quality_log
+..\.venv\Scripts\python.exe -m app.data.textify --all --reindex  # 全量文本化 + 重建向量库
+..\.venv\Scripts\python.exe -m app.data.textify --dry --limit 2  # 只看文本片段质量，不入库
+..\.venv\Scripts\python.exe -m app.data.datasource replay 300750 # 按当前映射离线回放原始响应
+..\.venv\Scripts\python.exe scripts\inspect_db.py all            # SQLite / Chroma 概览
 ```
 
 ## 数据层口径要点（详见 agent.md 与方案）
@@ -60,5 +90,6 @@ LLM 只负责自然语言理解与表达。
 - 数据层：东财三表采集 → 归一化 → SQLite 12 表（20 家 / 833 期 / 45,964 指标）→ 文本化 → 向量化
 - 编排层：LangGraph（classify 路由 + simple/react/plan 三执行路径 + 标准 function calling 协议）
 - 工具层：query_company / query_financials（single/trend/yoy）/ query_data_stats / rag_search
+- 服务层：FastAPI（SSE 流式对话）+ Vue3 前端
 
-**未完成**：报告 docx 落盘接入（M5）、前端可视化（M6）、放量全市场（M2）、Redis 落地。
+**未完成**：报告 docx 落盘接入（M5）、前端图表可视化（M6）、放量全市场（M2）。

@@ -1,0 +1,8 @@
+# 本文件只放工具链配置，依赖清单见 requirements.txt（唯一来源）。
+# 后端不通过 pip 安装（直接以 backend/ 为工作目录运行）。
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

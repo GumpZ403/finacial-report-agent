@@ -35,9 +35,16 @@
 ## 3. 整体架构（当前生效，2026-09-26 LangGraph 版）
 
 ```
-E:\financial-report-agent\
-├── app\
-│   ├── main.py              # FastAPI 入口：挂 agent 路由 + /health + 静态页 + /reports 下载
+D:\A_projects\finacial-report-agent\
+├── backend\                 # 后端（Python，以本目录为工作目录运行）
+│   ├── app\
+│   ├── scripts\             # 个人用脚本（拉数/校验/查库）
+│   ├── tests\               # pytest 基线
+│   ├── requirements.txt
+│   └── pyproject.toml       # pytest 配置
+├── frontend\                # Vue3 + Vite 前端（唯一前端，dist/ 由 FastAPI 托管）
+├── app\（backend\app\ 内部结构）
+│   ├── main.py              # FastAPI 入口：挂 agent 路由 + /health + 托管 frontend/dist + /reports
 │   │                        #   ★ 显式 import app.tools.financial_tools 触发工具自动注册
 │   ├── api\agent.py         # HTTP 层：/api/agent/chat · /chat/stream(SSE) · /memory · /clear
 │   ├── agent\               # 编排层（LangGraph，单 LLM + 标准 function calling）
@@ -59,18 +66,16 @@ E:\financial-report-agent\
 │   │   ├── textify.py       #   财报文本化（overview/anomaly/trend）
 │   │   ├── vector_db.py     #   ChromaDB 向量库
 │   │   └── repository.py    #   SQLite 查询仓储（工具层唯一数据源）
-│   └── static\index.html    # 单文件前端（财报版对话入口）
+│   └── （static\index.html 已删除，前端统一走 frontend/）
 ├── docs\                    # 方案文档（改造依据）
-├── scripts\                 # 个人用脚本（拉数/校验/查库）
-├── tests\                   # pytest 基线
 ├── storage\                 # financial.db / raw（原始json）/ chroma_db（1589 片段）
 ├── models\                  # 本地模型缓存（bge embedding / reranker）
 ├── reports\                 # 报告输出目录
 ├── logs\                    # 日志
-└── .env  agent.md  README.md  requirements.txt
+└── .env  agent.md  README.md
 ```
 
-**请求数据流**：前端 `index.html` → `POST /api/agent/chat`（或 SSE `/chat/stream`）
+**请求数据流**：前端（Vue3，`frontend/`）→ `POST /api/agent/chat`（或 SSE `/chat/stream`）
 → `app/agent/graph.py`（classify 分类 → 条件边 → 执行路径）→ `tools/*`（function calling）
 → 返回 `{intent, agent, reply, meta}` → 前端渲染。
 

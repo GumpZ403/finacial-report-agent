@@ -60,3 +60,6 @@ reports/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# pytest 临时目录
+pytest-cache-files-*/
