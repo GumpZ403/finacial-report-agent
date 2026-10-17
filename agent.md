@@ -73,9 +73,9 @@ D:\A_projects\finacial-report-agent\
 │   │   └── platform\               # 进程级基础设施：settings(配置/路径) / embedding(模型封装)
 │   ├── scripts\                    # 个人用脚本（拉数/校验/查库）
 │   ├── tests\                      # pytest
-│   ├── requirements.txt
 │   └── pyproject.toml              # pytest 配置
 ├── frontend\                       # Vue3 + Vite（唯一前端，dist/ 由 FastAPI 托管）
+├── requirements.txt                # Python 依赖（唯一来源；与根目录 .venv 同级）
 ├── docs\                           # 方案文档（改造依据）
 ├── storage\                        # financial.db（财报）/ conversations.db（会话记忆）/ raw / chroma_db
 ├── models\                         # 本地模型缓存（bge embedding / reranker）

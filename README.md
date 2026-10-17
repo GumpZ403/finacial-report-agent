@@ -17,9 +17,9 @@ financial-report-agent/
 │   ├── app/                 FastAPI + 自研 Flow 应用
 │   ├── scripts/             数据采集 / 巡检 / 评测脚本
 │   ├── tests/               pytest 基线测试
-│   ├── requirements.txt     依赖清单（唯一来源）
 │   └── pyproject.toml       pytest 配置
 ├── frontend/                Vue3 + Vite 前端（唯一前端，构建产物 frontend/dist）
+├── requirements.txt         Python 依赖清单（唯一来源，配合根目录 .venv）
 ├── storage/                 运行时数据（SQLite / Chroma / raw / cache，已 gitignore）
 ├── reports/                 Agent 导出报告（已 gitignore）
 ├── logs/                    运行日志（已 gitignore）
@@ -36,6 +36,10 @@ financial-report-agent/
 ## 快速开始
 
 ```powershell
+# 0) 依赖（Python 环境在仓库根 .venv；已存在可跳过第一行）
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
 # 1) 后端（HTTP API + 托管前端产物）
 cd backend
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
