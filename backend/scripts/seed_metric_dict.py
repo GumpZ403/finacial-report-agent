@@ -110,6 +110,49 @@ SEED = [
 ]
 
 
+SEED += [
+    ('short_term_loan', '短期借款', ['短期借款'], 'amount', 'neutral', '', 'general', 0, '短期借款（元），东财三表直给'),
+    ('long_term_loan', '长期借款', ['长期借款'], 'amount', 'neutral', '', 'general', 0, '长期借款（元），东财三表直给'),
+    ('bonds_payable', '应付债券', ['应付债券'], 'amount', 'neutral', '', 'general', 0, '应付债券（元），东财三表直给'),
+    ('lease_liab', '租赁负债', ['租赁负债'], 'amount', 'neutral', '', 'general', 0, '租赁负债（元），东财三表直给'),
+    ('noncurrent_liab_due_1y', '一年内到期的非流动负债', ['一年内到期的非流动负债'], 'amount', 'neutral', '', 'general', 0, '一年内到期的非流动负债（元），东财三表直给'),
+    ('notes_payable', '应付票据', ['应付票据'], 'amount', 'neutral', '', 'general', 0, '应付票据及应付账款（元），东财三表直给'),
+    ('contract_liab', '合同负债', ['合同负债'], 'amount', 'neutral', '', 'general', 0, '合同负债（元），东财三表直给'),
+    ('advance_receipts', '预收款项', ['预收款项'], 'amount', 'neutral', '', 'general', 0, '预收款项（元），东财三表直给'),
+    ('notes_receivable', '应收票据', ['应收票据'], 'amount', 'neutral', '', 'general', 0, '应收票据（元），东财三表直给'),
+    ('prepayments', '预付款项', ['预付款项'], 'amount', 'neutral', '', 'general', 0, '预付款项（元），东财三表直给'),
+    ('construction_in_progress', '在建工程', ['在建工程'], 'amount', 'neutral', '', 'general', 0, '在建工程（元），东财三表直给'),
+    ('intangible_asset', '无形资产', ['无形资产'], 'amount', 'neutral', '', 'general', 0, '无形资产（元），东财三表直给'),
+    ('right_of_use_asset', '使用权资产', ['使用权资产'], 'amount', 'neutral', '', 'general', 0, '使用权资产（元），东财三表直给'),
+    ('long_term_equity_invest', '长期股权投资', ['长期股权投资'], 'amount', 'neutral', '', 'general', 0, '长期股权投资（元），东财三表直给'),
+    ('total_non_current_assets', '非流动资产合计', ['非流动资产合计'], 'amount', 'neutral', '', 'general', 0, '非流动资产合计（元），东财三表直给'),
+    ('total_non_current_liab', '非流动负债合计', ['非流动负债合计'], 'amount', 'neutral', '', 'general', 0, '非流动负债合计（元），东财三表直给'),
+    ('minority_interest', '少数股东权益', ['少数股东权益'], 'amount', 'neutral', '', 'general', 0, '少数股东权益（元），东财三表直给'),
+    ('deferred_income', '递延收益', ['递延收益'], 'amount', 'neutral', '', 'general', 0, '递延收益（元），东财三表直给'),
+    ('research_expense', '研发费用', ['研发费用'], 'amount', 'neutral', '', 'general', 0, '研发费用（元），东财三表直给'),
+    ('tax_surcharge', '税金及附加', ['税金及附加'], 'amount', 'neutral', '', 'general', 0, '税金及附加（元），东财三表直给'),
+    ('investment_income', '投资收益', ['投资收益'], 'amount', 'neutral', '', 'general', 0, '投资收益（元），东财三表直给'),
+    ('fair_value_change', '公允价值变动收益', ['公允价值变动收益'], 'amount', 'neutral', '', 'general', 0, '公允价值变动收益（元），东财三表直给'),
+    ('asset_impairment', '资产减值损失', ['资产减值损失'], 'amount', 'neutral', '', 'general', 0, '资产减值损失（元），东财三表直给'),
+    ('credit_impairment', '信用减值损失', ['信用减值损失'], 'amount', 'neutral', '', 'general', 0, '信用减值损失（元），东财三表直给'),
+    ('other_income', '其他收益', ['其他收益'], 'amount', 'neutral', '', 'general', 0, '其他收益（元），东财三表直给'),
+    ('non_operating_income', '营业外收入', ['营业外收入'], 'amount', 'neutral', '', 'general', 0, '营业外收入（元），东财三表直给'),
+    ('non_operating_expense', '营业外支出', ['营业外支出'], 'amount', 'neutral', '', 'general', 0, '营业外支出（元），东财三表直给'),
+    ('cash_from_sales', '销售商品、提供劳务收到的现金', ['销售商品、提供劳务收到的现金'], 'amount', 'neutral', '', 'general', 0, '销售商品、提供劳务收到的现金（元），东财三表直给'),
+    ('cash_for_goods', '购买商品、接受劳务支付的现金', ['购买商品、接受劳务支付的现金'], 'amount', 'neutral', '', 'general', 0, '购买商品、接受劳务支付的现金（元），东财三表直给'),
+    ('cash_for_staff', '支付给职工以及为职工支付的现金', ['支付给职工以及为职工支付的现金'], 'amount', 'neutral', '', 'general', 0, '支付给职工以及为职工支付的现金（元），东财三表直给'),
+    ('cash_for_tax', '支付的各项税费', ['支付的各项税费'], 'amount', 'neutral', '', 'general', 0, '支付的各项税费（元），东财三表直给'),
+    ('cash_from_borrowing', '取得借款收到的现金', ['取得借款收到的现金'], 'amount', 'neutral', '', 'general', 0, '取得借款收到的现金（元），东财三表直给'),
+    ('cash_for_debt_repay', '偿还债务支付的现金', ['偿还债务支付的现金'], 'amount', 'neutral', '', 'general', 0, '偿还债务支付的现金（元），东财三表直给'),
+    ('cash_for_dividend', '分配股利、利润或偿付利息支付的现金', ['分配股利、利润或偿付利息支付的现金'], 'amount', 'neutral', '', 'general', 0, '分配股利、利润或偿付利息支付的现金（元），东财三表直给'),
+    ('cash_begin', '期初现金及现金等价物余额', ['期初现金及现金等价物余额'], 'amount', 'neutral', '', 'general', 0, '期初现金及现金等价物余额（元），东财三表直给'),
+    ('cash_end', '期末现金及现金等价物余额', ['期末现金及现金等价物余额'], 'amount', 'neutral', '', 'general', 0, '期末现金及现金等价物余额（元），东财三表直给'),
+    ('interest_bearing_debt', '有息负债', ['有息负债'], 'amount', 'positive', 'short_term_loan + long_term_loan + bonds_payable + noncurrent_liab_due_1y', 'general', 1, '短期借款 + 长期借款 + 应付债券 + 一年内到期的非流动负债（派生）'),
+    ('operate_cost_ratio', '营业成本率', ['营业成本率'], 'ratio', 'positive', 'operate_cost / revenue', 'general', 1, '营业成本 / 营业收入（派生，小数）'),
+    ('quick_ratio_conservative', '保守速动比率', ['保守速动比率'], 'times', 'positive', '(monetary_funds + receivable) / total_current_liab', 'general', 1, '(货币资金 + 应收账款) / 流动负债（派生，倍）'),
+    ('roic', '投入资本回报率(税前近似)', ['投入资本回报率(税前近似)'], 'ratio', 'positive', 'operating_profit / (total_equity + short_term_loan + long_term_loan + bonds_payable + noncurrent_liab_due_1y)', 'general', 1, '营业利润 / (总权益 + 有息负债)，税前近似（派生，小数）'),
+]
+
 def main():
     db = get_db()
     n_metric = 0

@@ -1,0 +1,13 @@
+bps
+dividend_per_share
+employee_count
+roe_weighted
+roe_avg
+ocf_per_share
+revenue_cagr_3y
+capital_adequacy_ratio
+net_interest_margin
+non_performing_loan_ratio
+provision_coverage
+interest_income
+interest_coverage

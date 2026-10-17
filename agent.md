@@ -154,6 +154,8 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 - **采集完整性**：`FetchResult.status` 逐表记 ok/failed，任一表失败 → `partial`，
   写 `financial_periods.fetch_status`；缺失的表**不会**被当成"空科目"入库，`fetch_slice.py`
   把 partial 计入失败清单并以非 0 退出码结束
+- **能力清单**：`docs/指标能力清单.md`（自动生成，`scripts/gen_capability_doc.py`）——
+  逐指标列出填充率、公式与"明确不支持+原因"；不变量测试见 `tests/test_capability.py`
 - **当前库（2026-10-17 真跑：akshare 1.19.1 + 东财）**：20 家公司 / 780 报告期 / 43,061 指标 /
   指标字典 75 条；raw 快照 21 份共 46.7 MB（单家 0.1~3.1 MB，最大万科 A 3.1 MB）——
   这些是**未压缩的历史快照**，新快照一律 `.json.gz`（实测 3.06 MB → 0.28 MB，全量约 4.1 MB）；

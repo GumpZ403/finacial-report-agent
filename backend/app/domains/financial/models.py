@@ -182,6 +182,44 @@ class FinancialCore(Base):
     accounts_payable = Column(Float, nullable=True)                     # 应付票据及应付账款（元）
     fixed_asset = Column(Float, nullable=True)                          # 固定资产（元）
     capex = Column(Float, nullable=True)                                # 资本开支（元）
+    short_term_loan = Column(Float, nullable=True)                      # 短期借款（元）
+    long_term_loan = Column(Float, nullable=True)                       # 长期借款（元）
+    bonds_payable = Column(Float, nullable=True)                        # 应付债券（元）
+    lease_liab = Column(Float, nullable=True)                           # 租赁负债（元）
+    noncurrent_liab_due_1y = Column(Float, nullable=True)               # 一年内到期的非流动负债（元）
+    notes_payable = Column(Float, nullable=True)                        # 应付票据及应付账款（元）
+    contract_liab = Column(Float, nullable=True)                        # 合同负债（元）
+    advance_receipts = Column(Float, nullable=True)                     # 预收款项（元）
+    notes_receivable = Column(Float, nullable=True)                     # 应收票据（元）
+    prepayments = Column(Float, nullable=True)                          # 预付款项（元）
+    construction_in_progress = Column(Float, nullable=True)             # 在建工程（元）
+    intangible_asset = Column(Float, nullable=True)                     # 无形资产（元）
+    right_of_use_asset = Column(Float, nullable=True)                   # 使用权资产（元）
+    long_term_equity_invest = Column(Float, nullable=True)              # 长期股权投资（元）
+    total_non_current_assets = Column(Float, nullable=True)             # 非流动资产合计（元）
+    total_non_current_liab = Column(Float, nullable=True)               # 非流动负债合计（元）
+    minority_interest = Column(Float, nullable=True)                    # 少数股东权益（元）
+    deferred_income = Column(Float, nullable=True)                      # 递延收益（元）
+    interest_bearing_debt = Column(Float, nullable=True)                # 有息负债（短期借款+长期借款+应付债券+一年内到期，派生）
+    research_expense = Column(Float, nullable=True)                     # 研发费用（元）
+    tax_surcharge = Column(Float, nullable=True)                        # 税金及附加（元）
+    investment_income = Column(Float, nullable=True)                    # 投资收益（元）
+    fair_value_change = Column(Float, nullable=True)                    # 公允价值变动收益（元）
+    asset_impairment = Column(Float, nullable=True)                     # 资产减值损失（元）
+    credit_impairment = Column(Float, nullable=True)                    # 信用减值损失（元）
+    other_income = Column(Float, nullable=True)                         # 其他收益（元）
+    non_operating_income = Column(Float, nullable=True)                 # 营业外收入（元）
+    non_operating_expense = Column(Float, nullable=True)                # 营业外支出（元）
+    cash_from_sales = Column(Float, nullable=True)                      # 销售商品、提供劳务收到的现金（元）
+    cash_for_goods = Column(Float, nullable=True)                       # 购买商品、接受劳务支付的现金（元）
+    cash_for_staff = Column(Float, nullable=True)                       # 支付给职工以及为职工支付的现金（元）
+    cash_for_tax = Column(Float, nullable=True)                         # 支付的各项税费（元）
+    cash_from_borrowing = Column(Float, nullable=True)                  # 取得借款收到的现金（元）
+    cash_for_debt_repay = Column(Float, nullable=True)                  # 偿还债务支付的现金（元）
+    cash_for_dividend = Column(Float, nullable=True)                    # 分配股利、利润或偿付利息支付的现金（元）
+    cash_begin = Column(Float, nullable=True)                           # 期初现金及现金等价物余额（元）
+    cash_end = Column(Float, nullable=True)                             # 期末现金及现金等价物余额（元）
+
 
 
 # 指标字典：语义来源（中文名/别名/公式/单位类型/行业范围），L0 回算与归一化的依据

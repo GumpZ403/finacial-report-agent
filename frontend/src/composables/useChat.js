@@ -23,6 +23,8 @@ const sessions = ref(loadSessions())
 const activeId = ref(localStorage.getItem(ACTIVE_KEY) || sessions.value[0]?.id || null)
 const streaming = ref(false)   // 是否有请求在跑（禁用发送）
 const busyText = ref('')       // 正在处理中的用户问题（重复提交保护）
+// 输入框草稿：放在这里是为了让空状态的示例问题能直接填入输入框
+const draft = ref('')
 
 const activeSession = computed(
   () => sessions.value.find((s) => s.id === activeId.value) || null,
@@ -85,9 +87,17 @@ async function sendMessage(text) {
     s.title = q.length > 24 ? q.slice(0, 24) + '…' : q
   }
 
-  // 追加用户消息 + 空的 AI 消息占位
+  // 追加用户消息 + 空的 AI 消息占位（data/clarify/options 一并预留）
   s.messages.push({ role: 'user', content: q })
-  s.messages.push({ role: 'assistant', content: '', agent: '', stage: '' })
+  s.messages.push({
+    role: 'assistant',
+    content: '',
+    agent: '',
+    stage: '',
+    data: [],
+    clarify: false,
+    options: [],
+  })
   // 注意：必须通过响应式数组索引（proxy）读写，不能持有原始对象引用——
   // 直接修改原始对象不会触发 Vue 的 set 拦截，页面将不更新（刷新才可见）。
   const aiIdx = s.messages.length - 1
@@ -135,8 +145,15 @@ async function sendMessage(text) {
           ai().content = evt.reply || ''
           ai().agent = evt.agent || ''
           ai().stage = ''
+          // 结构化数字：display 已由后端格式化，前端直接展示
+          ai().data = Array.isArray(evt.data) ? evt.data : []
+          ai().clarify = Boolean(evt.clarify)
+          ai().options = Array.isArray(evt.options) ? evt.options : []
         } else if (evt.type === 'error') {
           ai().stage = ''
+          ai().data = []
+          ai().clarify = false
+          ai().options = []
           ai().content = `处理失败：${evt.message || '未知错误'}`
         }
       }
@@ -145,6 +162,9 @@ async function sendMessage(text) {
     save(sessions.value)
   } catch (e) {
     ai().stage = ''
+    ai().data = []
+    ai().clarify = false
+    ai().options = []
     ai().content = `请求失败：${e.message || '网络异常'}`
     save(sessions.value)
   } finally {
@@ -160,6 +180,7 @@ export function useChat() {
     activeSession,
     streaming,
     busyText,
+    draft,
     createSession,
     selectSession,
     deleteSession,

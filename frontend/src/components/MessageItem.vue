@@ -1,13 +1,19 @@
 <script setup>
 import { computed } from 'vue'
 import { marked } from 'marked'
+import { useChat } from '../composables/useChat'
+import MetricCards from './MetricCards.vue'
+import ClarifyOptions from './ClarifyOptions.vue'
 
 const props = defineProps({
   message: { type: Object, required: true },
   streaming: { type: Boolean, default: false },
 })
 
+const { sendMessage } = useChat()
+
 const isUser = computed(() => props.message.role === 'user')
+
 const html = computed(() => {
   try {
     return marked.parse(props.message.content || '', { gfm: true, breaks: true })
@@ -16,107 +22,175 @@ const html = computed(() => {
   }
 })
 
-// 流式阶段提示文字
-// 后端已按节点下发可读文案（如「调用工具取数…」），此处直接展示；
-// 保留旧映射仅为了兼容旧版服务端只发 task_type 的情况。
+// 后端已下发可读阶段文案（如“调用工具取数…”）；这里只对旧版服务端
+// 只发 task_type 的情况做兜底映射，避免出现英文键名。
 const STAGE_TEXT = {
+  decide: '思考中…',
   simple: '正在查询…',
   react: '正在分析并调用工具…',
   plan: '正在规划并生成报告…',
   chat: '正在回复…',
   processing: '正在处理…',
 }
+
 const stageText = computed(() => {
   const s = props.message.stage
-  if (!s) return ''
-  return STAGE_TEXT[s] || s
+  return s ? STAGE_TEXT[s] || s : ''
 })
+
+// 只有流式等待、且还没有正文时，才显示单行阶段提示
+const showStage = computed(
+  () => !isUser.value && !props.message.content && props.streaming,
+)
+
+const metrics = computed(() => props.message.data || [])
+const options = computed(() => props.message.options || [])
+const showOptions = computed(
+  () => !isUser.value && props.message.clarify && options.value.length > 0,
+)
+
+// 后端错误会以“请求失败/处理失败”开头，用克制的红色区分
+const isError = computed(
+  () => !isUser.value && /^(请求失败|处理失败)/.test(props.message.content || ''),
+)
 </script>
 
 <template>
-  <div class="msg" :class="isUser ? 'msg-user' : 'msg-ai'">
-    <!-- AI 消息：agent 徽标 -->
-    <div v-if="!isUser && (message.agent || stageText)" class="msg-ai-tag">
-      {{ message.agent || '财报解读助手' }}
+  <!-- 不用气泡：靠缩进 + 小标签区分角色 -->
+  <article class="msg" :class="isUser ? 'msg-user' : 'msg-ai'">
+    <div class="msg-label">
+      <template v-if="isUser">你</template>
+      <template v-else>
+        <span class="ai-dot" aria-hidden="true"></span>
+        {{ message.agent || '财报解读助手' }}
+      </template>
     </div>
 
-    <div class="bubble" :class="isUser ? 'bubble-user' : 'bubble-ai'">
-      <!-- AI 思考中：占位 + 阶段提示 -->
-      <template v-if="!isUser && !message.content && stageText">
-        <div class="thinking">
-          <span class="dots"><i></i><i></i><i></i></span>
-          <span class="stage">{{ stageText }}</span>
-        </div>
-      </template>
-      <!-- 正常内容 -->
-      <div v-else-if="isUser" class="plain">{{ message.content }}</div>
-      <div v-else class="md-body" v-html="html"></div>
-    </div>
-  </div>
+    <template v-if="isUser">
+      <div class="msg-body plain">{{ message.content }}</div>
+    </template>
+
+    <template v-else>
+      <!-- 阶段提示：单行小字 + 细微闪烁点，不转圈 -->
+      <div v-if="showStage" class="stage" aria-live="polite">
+        <span class="stage-dot" aria-hidden="true"></span>
+        <span>{{ stageText || '正在思考…' }}</span>
+      </div>
+
+      <div
+        v-else
+        class="msg-body md-body"
+        :class="{ 'is-error': isError }"
+        v-html="html"
+      ></div>
+
+      <!-- 结构化数字：display 已格式化，直接展示 -->
+      <MetricCards v-if="!showStage" :data="metrics" />
+
+      <!-- 澄清选项：点击即作为下一条用户消息发送 -->
+      <ClarifyOptions
+        v-if="!showStage"
+        :options="options"
+        :disabled="streaming"
+        @select="sendMessage"
+      />
+    </template>
+  </article>
 </template>
 
 <style scoped>
 .msg {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 22px;
+  padding: 18px 0;
 }
+
+/* 左右留白：用户消息从左侧缩进，助手消息占满内容列 */
 .msg-user {
-  align-items: flex-end;
-}
-.msg-ai {
-  align-items: flex-start;
+  padding-left: 14%;
 }
 
-.msg-ai-tag {
-  font-size: 0.8em;
-  color: var(--text-secondary);
-  margin: 0 0 6px 2px;
-}
-
-.bubble {
-  max-width: 100%;
-  line-height: 1.6;
-}
-.bubble-user {
-  background: var(--bg-user-msg);
-  color: var(--text);
-  padding: 10px 16px;
-  border-radius: 18px;
-  border-bottom-right-radius: 6px;
-  max-width: 76%;
-  font-size: 0.96em;
-}
-.bubble-ai {
-  width: 100%;
-  font-size: 0.96em;
-}
-.plain {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.thinking {
+.msg-label {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--text-secondary);
-  font-size: 0.9em;
-  padding: 4px 0;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.01em;
 }
-.dots i {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
+
+.msg-user .msg-label {
+  justify-content: flex-end;
+}
+
+.ai-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent);
-  margin-right: 4px;
-  animation: blink 1.2s infinite ease-in-out;
 }
-.dots i:nth-child(2) { animation-delay: 0.2s; }
-.dots i:nth-child(3) { animation-delay: 0.4s; }
-@keyframes blink {
-  0%, 80%, 100% { opacity: 0.25; }
-  40% { opacity: 1; }
+
+.msg-body {
+  color: var(--ink);
+  font-size: 15.5px;
+  line-height: 1.75;
+}
+
+.plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.is-error {
+  color: #b42318;
+}
+
+/* 阶段提示：固定单行，只有圆点在呼吸 */
+.stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.stage-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: stage-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes stage-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 尊重减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .stage-dot {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+@media (max-width: 819px) {
+  .msg {
+    padding: 14px 0;
+  }
+
+  .msg-user {
+    padding-left: 8%;
+  }
 }
 </style>

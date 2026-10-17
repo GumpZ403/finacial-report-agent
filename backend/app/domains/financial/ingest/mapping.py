@@ -169,3 +169,49 @@ def em_rows(payload, col_map: dict[str, str]) -> dict[str, dict[str, float]]:
             # 后者仅作银行 fallback（银行利润表无 TOTAL_OPERATE_INCOME 列）
             rows.setdefault(end, {}).setdefault(code, v)
     return rows
+
+# ---- M0 扩展：分析必需的三表明细科目（列名取自 storage/raw 真实响应）----
+EM_BALANCE_MAP.update({
+    "SHORT_LOAN": "short_term_loan",
+    "LONG_LOAN": "long_term_loan",
+    "BOND_PAYABLE": "bonds_payable",
+    "LEASE_LIAB": "lease_liab",
+    "NONCURRENT_LIAB_1YEAR": "noncurrent_liab_due_1y",
+    "NOTE_PAYABLE": "notes_payable",
+    "CONTRACT_LIAB": "contract_liab",
+    "ADVANCE_RECEIVABLES": "advance_receipts",
+    "NOTE_RECE": "notes_receivable",
+    "PREPAYMENT": "prepayments",
+    "CIP": "construction_in_progress",
+    "INTANGIBLE_ASSET": "intangible_asset",
+    "USERIGHT_ASSET": "right_of_use_asset",
+    "LONG_EQUITY_INVEST": "long_term_equity_invest",
+    "TOTAL_NONCURRENT_ASSETS": "total_non_current_assets",
+    "TOTAL_NONCURRENT_LIAB": "total_non_current_liab",
+    "MINORITY_EQUITY": "minority_interest",
+    "DEFER_INCOME": "deferred_income",
+})
+
+EM_PROFIT_MAP.update({
+    "RESEARCH_EXPENSE": "research_expense",
+    "OPERATE_TAX_ADD": "tax_surcharge",
+    "INVEST_INCOME": "investment_income",
+    "FAIRVALUE_CHANGE_INCOME": "fair_value_change",
+    "ASSET_IMPAIRMENT_LOSS": "asset_impairment",
+    "CREDIT_IMPAIRMENT_LOSS": "credit_impairment",
+    "OTHER_INCOME": "other_income",
+    "NONBUSINESS_INCOME": "non_operating_income",
+    "NONBUSINESS_EXPENSE": "non_operating_expense",
+})
+
+EM_CASHFLOW_MAP.update({
+    "SALES_SERVICES": "cash_from_sales",
+    "BUY_SERVICES": "cash_for_goods",
+    "PAY_STAFF_CASH": "cash_for_staff",
+    "PAY_ALL_TAX": "cash_for_tax",
+    "RECEIVE_LOAN_CASH": "cash_from_borrowing",
+    "PAY_DEBT_CASH": "cash_for_debt_repay",
+    "ASSIGN_DIVIDEND_PORFIT": "cash_for_dividend",
+    "BEGIN_CASH_EQUIVALENTS": "cash_begin",
+    "END_CASH_EQUIVALENTS": "cash_end",
+})

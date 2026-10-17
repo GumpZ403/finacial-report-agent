@@ -63,3 +63,6 @@ htmlcov/
 
 # pytest 临时目录
 pytest-cache-files-*/
+
+# 前端本地预览产物（不入库）
+frontend/.preview/

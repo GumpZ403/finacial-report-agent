@@ -182,3 +182,45 @@ def init_tables(engine: Engine) -> dict:
     """建表（幂等）+ 迁移既有库"""
     Base.metadata.create_all(engine)
     return migrate(engine)
+
+# ---- M0 扩展：分析必需的三表明细科目（与 models.FinancialCore 列一一对应）----
+_CORE_EXTRA_COLUMNS: dict[str, str] = {
+    "interest_bearing_debt": "FLOAT",
+    "short_term_loan": "FLOAT",
+    "long_term_loan": "FLOAT",
+    "bonds_payable": "FLOAT",
+    "lease_liab": "FLOAT",
+    "noncurrent_liab_due_1y": "FLOAT",
+    "notes_payable": "FLOAT",
+    "contract_liab": "FLOAT",
+    "advance_receipts": "FLOAT",
+    "notes_receivable": "FLOAT",
+    "prepayments": "FLOAT",
+    "construction_in_progress": "FLOAT",
+    "intangible_asset": "FLOAT",
+    "right_of_use_asset": "FLOAT",
+    "long_term_equity_invest": "FLOAT",
+    "total_non_current_assets": "FLOAT",
+    "total_non_current_liab": "FLOAT",
+    "minority_interest": "FLOAT",
+    "deferred_income": "FLOAT",
+    "research_expense": "FLOAT",
+    "tax_surcharge": "FLOAT",
+    "investment_income": "FLOAT",
+    "fair_value_change": "FLOAT",
+    "asset_impairment": "FLOAT",
+    "credit_impairment": "FLOAT",
+    "other_income": "FLOAT",
+    "non_operating_income": "FLOAT",
+    "non_operating_expense": "FLOAT",
+    "cash_from_sales": "FLOAT",
+    "cash_for_goods": "FLOAT",
+    "cash_for_staff": "FLOAT",
+    "cash_for_tax": "FLOAT",
+    "cash_from_borrowing": "FLOAT",
+    "cash_for_debt_repay": "FLOAT",
+    "cash_for_dividend": "FLOAT",
+    "cash_begin": "FLOAT",
+    "cash_end": "FLOAT",
+}
+REQUIRED_COLUMNS["financial_core"].update(_CORE_EXTRA_COLUMNS)
