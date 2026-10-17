@@ -23,7 +23,7 @@
 | ⑤ 财报解读报告 | 生成解读报告（.md / .docx 输出） | plan 子图 + 写作节点 |
 
 **RAG 定位**：`rag_search` 是**检索工具**而非独立问答管线——混合检索（向量 + BM25）+ 重排
-返回片段，由 ReAct 循环的外层 LLM 组织回答；问具体数字时 LLM 应优先调 `query_financials`
+返回片段，由对话循环的外层 LLM 组织回答；问具体数字时 LLM 应优先调 `query_financials`
 （结构化 SQL 精度高于文本片段）。
 
 **核心差异化**：指标计算全部规则化（LLM 不算数）、数据源可放量（akshare 免费）、
@@ -49,9 +49,8 @@ D:\A_projects\finacial-report-agent\
 │   │   │   └── memory.py           #   会话记忆（短期滑窗 + 超限 LLM 摘要压缩）
 │   │   ├── domains\                # 业务领域包
 │   │   │   ├── conversation\       #   对话编排（单 agent 入口）
-│   │   │   │   ├── routing.py      #     classify：一次 LLM 调用产出 intent + task_type + entities
-│   │   │   │   ├── graph.py        #     主图：classify → 条件边 → simple / react / plan / chat
-│   │   │   │   └── react.py        #     ReAct：标准 FC 协议（assistant(tool_calls) → tool(tool_call_id)）
+│   │   │   │   ├── loop.py         #     主循环：assemble → decide → act → answer（有界，串行工具）
+│   │   │   │   └── graph.py        #     入口：build_loop() / get_agent_graph() 单例
 │   │   │   ├── financial\          #   财报数据（东财三表单一数据源）
 │   │   │   │   ├── models.py       #     SQLAlchemy 表模型（9 张表）
 │   │   │   │   ├── db.py           #     引擎 / 会话 / 建表迁移（REQUIRED_COLUMNS 在此）
@@ -90,7 +89,7 @@ D:\A_projects\finacial-report-agent\
 ```
 
 **请求数据流**：前端（Vue3，`frontend/`）→ `POST /api/agent/chat`（或 SSE `/chat/stream`）
-→ `app/domains/conversation/graph.py`（classify 分类 → 条件边 → 执行路径）
+→ `app/domains/conversation/loop.py`（有界循环：assemble → decide → act → answer）
 → `app/harness/registry.py` 里注册的工具（function calling）→ 返回 `{intent, agent, reply, meta}`。
 
 **分层纪律**：数据访问只走 `domains/financial/repository.py`；外部数据源只走
@@ -179,7 +178,7 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 | M1.5 | 数据层收尾：schema/repository 拆分、textify、vector_db 财报版 | ✅ 完成 |
 | M3 | 数据源映射：**东财三表替代新浪双源**（映射表 + 归一化 + 重拉 20 家） | ✅ 完成 |
 | M4 | 工具层：query_company / query_financials（single/trend/yoy）/ query_data_stats（rag_search 已冻结，不注册） | ✅ 完成 |
-| 架构 | 编排层自研 Flow（classify 路由 + 三执行路径 + 标准 FC 协议） | ✅ 完成（2026-10 由 LangGraph 迁移） |
+| 架构 | 编排层自研 Flow + 单一有界对话循环（assemble/decide/act/answer + 标准 FC 协议） | ✅ 完成（2026-10：LangGraph→Flow；四路分叉→单循环） |
 | M5 | 报告 DAG：plan 子图 + 写作 + docx 输出 | 🔄 部分（plan 子图已有，docx 落盘未接） |
 | M6 | 前端财报化 | 🔄 部分（对话入口可用，可视化未做） |
 | M2 | 放量全市场（**后置**：先验收全链路，再谈放量） | ⏸ 后置 |
@@ -203,7 +202,7 @@ Agent 不直接碰库，只通过 `domains/*/tools/` 注册到 `harness/registry
 4. **合规**：涉及个股的回复不构成投资建议，输出标注数据来源与口径
 5. **工具契约**：handler 签名统一 `(args: dict, on_stage=None) -> dict`；工具在模块加载时自动注册
    （tools_registry），main.py 显式 import 触发
-6. **FC 协议**：ReAct 循环走标准 OpenAI function calling（assistant(tool_calls) → tool(tool_call_id)），
+6. **FC 协议**：对话循环走标准 OpenAI function calling（assistant(tool_calls) → tool(tool_call_id)），
    支持多工具并行与错误回填
 
 ---

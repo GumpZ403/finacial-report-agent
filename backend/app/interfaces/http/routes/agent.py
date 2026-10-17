@@ -1,18 +1,18 @@
 """统一 Agent 对话 API
 
-- POST /api/agent/chat: 单对话入口（classify → 路由 → 四条执行路径）
-- POST /api/agent/chat/stream: SSE 流式版（逐节点阶段事件 + 最终结果）
+- POST /api/agent/chat: 同步对话入口
+- POST /api/agent/chat/stream: SSE 流式（逐节点阶段事件 + 最终结果）
 - GET  /api/agent/memory: 指定会话的记忆概览
 - POST /api/agent/clear: 清空指定会话的记忆
 - GET  /api/agent/flow: 主流程结构（调试用）
 
-2026-10 变更：
-- 编排层由 LangGraph 换成自研 Flow（harness/flow.py）。SSE 阶段事件改为
-  **逐节点真流式**：流程跑在后台线程里，事件经 Queue 送到生成器，不再等整个流程结束。
-- 此前只有非流式 /chat 写记忆，而前端只用流式 → 多轮对话实际不记上下文。两个入口都写。
-- 此前 session_id 字段存在但未使用，所有请求共享一个 Memory 单例；现在按会话隔离。
-- 会话记忆已落盘（storage/conversations.db，见 harness/store.py）。当前是**双写**：
-  读仍走进程内 Memory（重启后历史不会回上下文），写同时进库 → 下一步把读路径切到库里。
+2026-10 变更（第二条）：
+- 主流程改为单一有界循环 assemble → decide → act → answer（domains/conversation/loop.py），
+  取消 classify 预分类与 four-way 路由
+- 响应体随之简化：删掉 `intent` 与 `meta`（前端从未读过），保留 `agent` 标签，
+  新增 `clarify` / `options`（反问澄清时前端可渲染成按钮）
+- 每轮的结构化信息（tools_called / steps / stop_reason / clarify）由**循环自己**产出，
+  写入 state["meta"]，再落到 conversations.meta_json（只写 assistant 行），不返回给前端
 """
 from __future__ import annotations
 
@@ -36,27 +36,15 @@ router = APIRouter(prefix="/api/agent", tags=["Agent 对话"])
 # 主流程实例（进程内单例）
 _graph = get_agent_graph()
 
-# 每个分支的对外展示名
-_INTENT_AGENT = {
-    "company_query": "公司档案查询",
-    "metric_query": "财务指标查询",
-    "analysis": "财报分析",
-    "report": "财报解读报告",
-    "data_overview": "数据概览",
-    "chat": "财报解读助手",
-}
+# 对外展示名。多 agent 落地前固定一个值（前端只拿它做标签，且有兜底）
+AGENT_NAME = "财报解读助手"
 
-# 节点 → 前端展示文案。key 是 "流程名.节点名"（节点名在不同流程里会重名）
+# 节点 → 前端展示文案。key 是 "流程名.节点名"
 _STAGE_TEXT = {
-    "conversation.classify": "识别意图…",
-    "conversation.tool": "查询财务数据…",
+    "conversation.assemble": "准备上下文…",
+    "conversation.decide": "思考中…",
+    "conversation.act": "调用工具取数…",
     "conversation.answer": "整理回答…",
-    "conversation.chat": "生成回答…",
-    "react.llm": "推理中…",
-    "react.tool": "调用工具取数…",
-    "plan.plan": "规划报告结构…",
-    "plan.execute": "采集报告数据…",
-    "plan.write": "撰写报告正文…",
 }
 
 # 一个会话最多保留的字符数（写记忆时截断，防止摘要被超长回复拖慢）
@@ -78,31 +66,20 @@ def _friendly_error(e: Exception) -> str:
 
 
 def _to_response(state: dict) -> dict:
-    """流程状态 → 前端四件套 {intent, agent, reply, meta}"""
-    intent = state.get("intent") or "chat"
-    reply = state.get("answer") or ""
+    """流程状态 → 前端响应
+
+    只暴露三样前端真正会用的东西：谁回答（agent）、回答内容（reply）、
+    是否需要用户澄清（clarify + options）。intent/meta 已删除——前端从未读过它们。
+    """
+    reply = (state.get("answer") or "").strip()
     if not reply:
-        reply = "抱歉，没有生成有效回答，换个说法试试？"
+        reply = "抱歉，我没有生成有效回答，换个说法试试？"
     return {
-        "intent": intent,
-        "agent": _INTENT_AGENT.get(intent, "财报解读助手"),
+        "agent": AGENT_NAME,
         "reply": reply,
-        "meta": state.get("meta") or {},
+        "clarify": bool(state.get("clarify")),
+        "options": list(state.get("options") or []),
     }
-
-
-def _meta_snapshot(state: dict) -> dict:
-    """从流程最终状态里摘出要落盘的决策信息（这是唯一需要"从流程内部取"的字段）"""
-    snap = {
-        "intent": state.get("intent"),
-        "task_type": state.get("task_type"),
-        "tool_name": state.get("tool_name"),
-        "confidence": state.get("confidence"),
-        "tool_status": [
-            r.get("tool_status") for r in (state.get("tool_results") or []) if isinstance(r, dict)
-        ],
-    }
-    return {k: v for k, v in snap.items() if v not in (None, "", [])}
 
 
 def _remember(session_id: str, query: str, reply: str, meta: dict | None = None) -> None:
@@ -129,24 +106,21 @@ def _stage_message(ev: FlowEvent) -> str | None:
 
 @router.post("/chat")
 def agent_chat(req: AgentChatRequest):
-    """统一对话入口（同步）：classify → 路由 → 执行 → 回答"""
+    """统一对话入口（同步）：有界循环 → 回答"""
     query = req.query.strip()
     if not query:
-        return {"intent": "chat", "agent": "财报解读助手", "reply": "请说点什么~", "meta": {}}
+        return {"agent": AGENT_NAME, "reply": "请说点什么~", "clarify": False, "options": []}
 
     mem = get_session_store().get(req.session_id)
     try:
-        result = _graph.run({
-            "query": query,
-            "history": mem.get_context(),
-            "max_rounds": 4,
-        })
+        state = _graph.run({"query": query, "history": mem.get_context()})
     except Exception as e:
         logger.exception("[AgentChat] 对话处理失败")
-        return {"intent": "chat", "agent": "财报解读助手",
-                "reply": "处理失败：" + _friendly_error(e), "meta": {}}
-    resp = _to_response(result)
-    _remember(req.session_id, query, resp["reply"], meta=_meta_snapshot(result))
+        return {"agent": AGENT_NAME, "reply": "处理失败：" + _friendly_error(e),
+                "clarify": False, "options": []}
+
+    resp = _to_response(state)
+    _remember(req.session_id, query, resp["reply"], meta=state.get("meta"))
     return resp
 
 
@@ -158,8 +132,8 @@ def agent_chat_stream(req: AgentChatRequest):
 
     def gen():
         if not query:
-            yield _sse({"type": "result", "intent": "chat", "agent": "财报解读助手",
-                        "reply": "请说点什么~", "meta": {}})
+            yield _sse({"type": "result", "agent": AGENT_NAME,
+                        "reply": "请说点什么~", "clarify": False, "options": []})
             return
 
         mem = get_session_store().get(session_id)
@@ -169,7 +143,7 @@ def agent_chat_stream(req: AgentChatRequest):
         def worker() -> None:
             try:
                 state = _graph.run(
-                    {"query": query, "history": mem.get_context(), "max_rounds": 4},
+                    {"query": query, "history": mem.get_context()},
                     on_event=lambda ev: q.put(("event", ev)),
                 )
                 q.put(("done", state))
@@ -195,7 +169,7 @@ def agent_chat_stream(req: AgentChatRequest):
 
         resp = _to_response(final)
         # 流式入口同样写记忆（此前只有 /chat 写，前端只用流式 → 上下文丢失）
-        _remember(session_id, query, resp["reply"], meta=_meta_snapshot(final))
+        _remember(session_id, query, resp["reply"], meta=final.get("meta"))
         yield _sse({"type": "result", **resp})
 
     return StreamingResponse(gen(), media_type="text/event-stream")

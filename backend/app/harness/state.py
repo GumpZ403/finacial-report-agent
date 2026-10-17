@@ -1,9 +1,11 @@
 """Agent 状态定义（流程共享黑板）
 
-一次运行里所有节点读写同一个 state dict（TypedDict 只做键提示，不做运行时校验）：
-- classify 节点写入 intent / task_type / entities
-- 执行节点写入 tool_results / messages
-- 生成节点写入 answer / meta
+一次运行里所有节点读写同一个 state dict（TypedDict 只做键提示，不做运行时校验）。
+
+2026-10 变更：取消 classify 预分类，主流程改为单一有界循环
+（assemble → decide → act → answer），因此删掉 intent / task_type / tool_name /
+entities / confidence / reason / tool_rounds / max_rounds 七个字段，
+新增循环字段（steps / observations / tool_calls_made / stop_reason / clarify）。
 """
 from __future__ import annotations
 
@@ -15,28 +17,33 @@ class AgentState(TypedDict, total=False):
 
     # ---- 输入 ----
     query: str                 # 用户问题原文
-    history: list[dict]        # 对话历史（来自 Memory，注入 LLM 上下文）
+    history: list[dict]        # 对话历史（来自 Memory：摘要 + 最近窗口）
 
-    # ---- classify 产出（意图 + 路由合一）----
-    intent: str                # 语义层：company_query / metric_query / analysis / report / data_overview / chat
-    task_type: str             # 执行层：simple / react / plan / chat（路由依据）
-    tool_name: str             # simple 路径预选工具（classify 一次调用直接给出）
-    entities: dict             # 实体抽取：{"company": "贵州茅台", "metric": "gross_margin", "period": "2025Q1"}
-    confidence: float          # 分类置信度（< 阈值时降级到更稳的路径）
-    reason: str                # 分类依据（可观测/调试）
+    # ---- 循环轨迹 ----
+    messages: list[dict]       # 完整消息轨迹（system / user / assistant(tool_calls) / tool 回填）
+    tool_calls: list[dict]     # 本轮**待执行**的工具调用队列（标准 FC：[{id, function:{name, arguments}}]）
+    observations: list[dict]   # 每次工具调用的结构化结果（ToolResult.to_dict()）
+    tool_calls_made: list[dict]  # 已执行的调用摘要：[{name, status}]
+    fingerprints: list[str]    # 已执行调用的指纹（重复调用检测）
 
-    # ---- 执行过程 ----
-    tool_rounds: int           # 已执行工具轮数（ReAct 限深用）
-    max_rounds: int            # 工具调用上限（防死循环）
-    tool_results: list[dict]   # 工具执行结果列表（[{tool, args, reply, tool_status}]）
-    tool_calls: list[dict]     # 本轮待执行工具队列（标准 FC：[{id, function:{name, arguments}}]）
-    messages: list[dict]       # agent 内部消息（完整轨迹：assistant(tool_calls) + tool 回填）
+    # ---- 预算（LoopBudget 与 state 互转，见 harness/loop.py）----
+    steps: int                 # 已消耗的 decide 轮数
+    tool_calls_used: int       # 已消耗的工具调用次数
+    started_at: float          # monotonic 起始时间
+    max_steps: int
+    max_calls: int
+    max_seconds: float
 
-    # ---- Plan & Solve（报告子图专有：此前用了却未声明，TypedDict 校验不到）----
-    plan: list[dict]           # 计划步骤（[{step, action, desc, args?}]）
-    plan_index: int            # 已执行到第几步
-    collected: list[dict]      # 计划执行收集到的数据（[{step, result, status}]）
+    # ---- 终止 ----
+    stop_reason: str           # harness.loop.STOP_*：answered / clarify / budget_* / repeated_call / error
+    clarify: bool              # 是否是反问澄清
+    options: list[str]         # 澄清时可选项（前端渲染成按钮）
+
+    # ---- Plan & Solve（报告子图专有，主循环不使用）----
+    plan: list[dict]
+    plan_index: int
+    collected: list[dict]
 
     # ---- 输出 ----
     answer: str                # 最终回答文本
-    meta: dict[str, Any]       # 透传前端渲染所需元信息（sources/stats/word_count...）
+    meta: dict[str, Any]       # 本轮结构化元信息（tools_called / steps / stop_reason / clarify）

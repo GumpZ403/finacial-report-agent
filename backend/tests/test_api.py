@@ -13,7 +13,11 @@ from app.main import app
 
 
 class FakeFlow:
-    """记录入参、可按需发事件、返回固定答案的假流程"""
+    """记录入参、可按需发事件、返回固定答案的假流程
+
+    真流程是 assemble → decide → act → answer 的有界循环；这里只模拟出两个
+    阶段事件（decide / answer），用来验证接口层的 SSE 透传与记忆写入。
+    """
 
     def __init__(self):
         self.calls: list[dict] = []
@@ -21,12 +25,17 @@ class FakeFlow:
     def run(self, payload, on_event=None, checkpoint=None):
         self.calls.append(payload)
         if on_event is not None:
-            # 模拟主流程：先 classify 再 answer
-            on_event(FlowEvent(kind="node_start", flow="conversation", node="classify"))
+            on_event(FlowEvent(kind="node_start", flow="conversation", node="decide"))
             on_event(FlowEvent(kind="node_end", flow="conversation",
-                               node="classify", next="tool"))
+                               node="decide", next="answer"))
             on_event(FlowEvent(kind="node_start", flow="conversation", node="answer"))
-        return {"intent": "chat", "answer": "假答案", "meta": {}}
+        return {
+            "answer": "假答案",
+            "clarify": False,
+            "options": [],
+            "meta": {"tools_called": [], "steps": 1,
+                     "stop_reason": "answered", "clarify": False},
+        }
 
 
 @pytest.fixture
@@ -149,11 +158,11 @@ class TestPersistence:
         try:
             raw = con.execute(
                 "SELECT meta_json FROM conversations"
-                " WHERE session_id='t-chat' AND turn_index=0"
+                " WHERE session_id='t-chat' AND turn_index=1"   # meta 只写 assistant 行
             ).fetchone()[0]
         finally:
             con.close()
-        assert json.loads(raw)["intent"] == "chat"
+        assert json.loads(raw)["stop_reason"] == "answered"
 
     def test_clear_removes_disk_rows(self, client, fake_graph):
         client.post("/api/agent/chat", json={"query": "清盘前", "session_id": "t-a"})
@@ -186,15 +195,15 @@ class TestStreaming:
         r = client.post("/api/agent/chat/stream", json={"query": "你好", "session_id": "t-stream"})
         assert r.status_code == 200
         assert '"type": "stage"' in r.text
-        assert "识别意图" in r.text
+        assert "思考中" in r.text
         assert "整理回答" in r.text
         # 阶段事件必须按执行顺序推送（否则前端进度条会跳回）
-        assert r.text.index("识别意图") < r.text.index("整理回答")
+        assert r.text.index("思考中") < r.text.index("整理回答")
 
     def test_flow_structure_endpoint(self, client):
         d = client.get("/api/agent/flow").json()
-        assert d["entry"] == "classify"
-        assert set(d["nodes"]) == {"classify", "chat", "tool", "answer", "react", "plan"}
+        assert d["entry"] == "assemble"
+        assert set(d["nodes"]) == {"assemble", "decide", "act", "answer"}
 
 
 class TestCORS:

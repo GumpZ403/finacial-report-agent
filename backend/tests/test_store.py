@@ -111,11 +111,13 @@ class TestAppendTurn:
             con.close()
         assert [r["content"] for r in store.load_context("s1")] == ["q", "a"]
 
-    def test_meta_json_roundtrip(self, store):
-        meta = {"intent": "metric_query", "task_type": "simple", "tool_status": ["no_data"]}
+    def test_meta_json_only_on_assistant_row(self, store):
+        """meta 只挂在 assistant 行（user 行存同一份是冗余）"""
+        meta = {"tools_called": ["query_financials"], "stop_reason": "answered"}
         store.append_turn("s1", "q", "a", meta=meta)
-        raw = _rows(store, "SELECT meta_json FROM conversations WHERE turn_index=0")[0][0]
-        assert json.loads(raw) == meta
+        rows = dict(_rows(store, "SELECT turn_index, meta_json FROM conversations"))
+        assert rows[0] is None
+        assert json.loads(rows[1]) == meta
 
     def test_sessions_are_isolated(self, store):
         store.append_turn("s1", "A 的问题", "a")

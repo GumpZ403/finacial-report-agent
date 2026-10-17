@@ -157,7 +157,9 @@ class ConversationStore:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    (sid, start, "user", query, meta_json, now),
+                    # meta 只挂在 assistant 行：user 行的内容就是用户原话，
+                    # 再存一份同样的 JSON 是纯冗余（既浪费存储也容易读错）
+                    (sid, start, "user", query, None, now),
                     (sid, start + 1, "assistant", reply, meta_json, now),
                 ],
             )

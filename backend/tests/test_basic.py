@@ -121,13 +121,8 @@ class TestConversationFlow:
     def test_flow_builds(self):
         from app.domains.conversation.graph import get_agent_graph
         flow = get_agent_graph()
-        assert flow.node_names == ["classify", "chat", "tool", "answer", "react", "plan"]
-        assert flow.describe()["entry"] == "classify"
-
-    def test_react_flow_builds(self):
-        from app.domains.conversation.react import build_react_flow
-        f = build_react_flow()
-        assert set(f.node_names) == {"llm", "tool"}
+        assert flow.node_names == ["assemble", "decide", "act", "answer"]
+        assert flow.describe()["entry"] == "assemble"
 
     def test_report_flow_builds(self):
         from app.domains.report.graph import DEFAULT_PLAN, build_plan_flow
